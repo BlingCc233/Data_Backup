@@ -87,7 +87,7 @@ jobs:
       # 8. 构建 Wails 应用
       # 关键修复: 恢复为统一的构建命令，因为现在矩阵中的所有 arch 参数都是 wails build 直接支持的
       - name: Build Wails Application
-        run: wails build -platform ${{ matrix.platform }} -arch ${{ matrix.arch }} -ldflags="-s -w"
+        run: wails build -platform ${{ matrix.platform }}  -ldflags="-s -w"
 
       # 9. 打包资源文件
       - name: Package Asset
