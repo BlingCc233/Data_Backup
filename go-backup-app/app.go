@@ -92,17 +92,22 @@ func (a *App) StartBackup(config BackupConfig) (string, error) {
 	return "Backup completed successfully!", nil
 }
 
-// StartRestore 暴露给前端的恢复函数 (增加了 password 参数)
-func (a *App) StartRestore(backupFile string, restoreDir string, password string) (string, error) {
-	log.Printf("Starting restore from %s to %s\n", backupFile, restoreDir)
+type RestoreConfig struct {
+	BackupFile string `json:"backupFile"`
+	RestoreDir string `json:"restoreDir"`
+	Password   string `json:"password"`
+}
+
+// StartRestore 暴露给前端的恢复函数 (现在接收一个 RestoreConfig 结构体)
+func (a *App) StartRestore(config RestoreConfig) (string, error) {
+	log.Printf("Starting restore with config: %+v\n", config) // 密码不会被打印，因为它是空字符串
 
 	manager := core.NewBackupManager(a.ctx)
-	err := manager.Restore(backupFile, restoreDir, password)
+	// 从 config 结构体中获取参数
+	err := manager.Restore(config.BackupFile, config.RestoreDir, config.Password)
 	if err != nil {
-		// 关键：捕获需要密码的错误并通知前端
 		if errors.Is(err, core.ErrPasswordRequired) {
 			log.Println("Password required for restore")
-			// 返回一个特殊格式的错误，前端可以解析它
 			return "", fmt.Errorf("password_required")
 		}
 		log.Printf("Restore failed: %v\n", err)

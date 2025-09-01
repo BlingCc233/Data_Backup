@@ -91,6 +91,22 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class RestoreConfig {
+	    backupFile: string;
+	    restoreDir: string;
+	    password: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new RestoreConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.backupFile = source["backupFile"];
+	        this.restoreDir = source["restoreDir"];
+	        this.password = source["password"];
+	    }
+	}
 
 }
 

@@ -114,7 +114,7 @@
           </div>
         </div>
         <div class="action-bar">
-          <button class="primary" @click="doRestore" :disabled="!restoreFile || !restoreDir || inProgress">
+          <button class="primary" @click="doRestore()" :disabled="!restoreFile || !restoreDir || inProgress">
             {{ inProgress ? 'Restoring...' : 'Start Restore' }}
           </button>
         </div>
@@ -129,6 +129,28 @@
         </div>
       </div>
     </main>
+
+    <div v-if="isPasswordModalVisible" class="modal-overlay">
+      <div class="modal-content">
+        <h3>Enter Password</h3>
+        <p>The backup file is encrypted. Please enter the password to continue.</p>
+        <div class="input-group modal-input">
+          <label>Password:</label>
+          <input
+              type="password"
+              v-model="restorePasswordInput"
+              @keyup.enter="submitPasswordAndRetryRestore"
+              placeholder="Enter backup password"
+              ref="passwordInputRef"
+          />
+        </div>
+        <div class="modal-actions">
+          <button @click="cancelPasswordPrompt">Cancel</button>
+          <button class="primary" @click="submitPasswordAndRetryRestore">Submit</button>
+        </div>
+      </div>
+    </div>
+
   </div>
 </template>
 
@@ -167,6 +189,10 @@ const restoreDir = ref('');
 // Log State
 const statusMessage = ref('Ready.');
 const logMessages = ref([]);
+
+const isPasswordModalVisible = ref(false);
+const restorePasswordInput = ref('');
+const passwordInputRef = ref(null); // 用于自动聚焦输入框
 
 // --- Wails Event Listeners ---
 onMounted(() => {
@@ -241,37 +267,69 @@ async function doBackup() {
 }
 
 
-async function doRestore(password = '') { // Allow passing a password
-  if (!restoreFile.value || !restoreDir.value) { /* ... */ return; }
+async function doRestore(password) {
+  let cleanPassword = (typeof password === 'string') ? password : '';
+
+  if (!restoreFile.value || !restoreDir.value) {
+    statusMessage.value = "Please select backup file and restore directory.";
+    return;
+  }
 
   inProgress.value = true;
   statusMessage.value = "Restore in progress...";
-  if (password === '') {
-    logMessages.value = []; // Clear logs only on first attempt
+  if (cleanPassword === '') {
+    logMessages.value = [];
   }
 
   try {
-    const result = await StartRestore(restoreFile.value, restoreDir.value, password);
+    const result = await StartRestore({
+      backupFile: restoreFile.value,
+      restoreDir: restoreDir.value,
+      password: cleanPassword,
+    });
     statusMessage.value = result;
   } catch (error) {
-    // KEY CHANGE: Handle password request from backend
     if (typeof error === 'string' && error.includes("password_required")) {
       statusMessage.value = "This backup is encrypted. Please provide the password.";
-      const userPassword = prompt("Enter password for " + restoreFile.value);
-      if (userPassword) {
-        // Retry the restore with the password
-        await doRestore(userPassword);
-      } else {
-        statusMessage.value = "Password not provided. Restore cancelled.";
-      }
+      // --- 修改点：不再使用 prompt，而是显示我们的模态框 ---
+      isPasswordModalVisible.value = true;
+      // 使用 nextTick 确保 DOM 更新后再聚焦
+      await nextTick();
+      passwordInputRef.value?.focus();
+
     } else {
       statusMessage.value = `Error: ${error}`;
     }
   } finally {
-    inProgress.value = false;
+    // 只有在非密码请求的情况下才设置 inProgress=false
+    // 如果弹出了密码框，则让它保持 inProgress 状态
+    if (!isPasswordModalVisible.value) {
+      inProgress.value = false;
+    }
   }
 }
 
+// --- 新增：处理模态框的函数 ---
+
+function submitPasswordAndRetryRestore() {
+  if (!restorePasswordInput.value) {
+    alert("Password cannot be empty.");
+    return;
+  }
+  // 隐藏模态框
+  isPasswordModalVisible.value = false;
+  // 带着用户输入的密码重试恢复
+  doRestore(restorePasswordInput.value);
+  // 清空密码输入
+  restorePasswordInput.value = '';
+}
+
+function cancelPasswordPrompt() {
+  isPasswordModalVisible.value = false;
+  statusMessage.value = "Password not provided. Restore cancelled.";
+  inProgress.value = false; // 取消时，结束 inProgress 状态
+  restorePasswordInput.value = '';
+}
 </script>
 
 <style>
@@ -504,5 +562,47 @@ input[type="checkbox"].toggle:checked {
 }
 input[type="checkbox"].toggle:checked::before {
   transform: translateX(18px);
+}
+
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.6);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+}
+
+.modal-content {
+  background-color: var(--sidebar-bg);
+  padding: 2rem;
+  border-radius: 8px;
+  width: 90%;
+  max-width: 500px;
+  box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+}
+
+.modal-content h3 {
+  margin-top: 0;
+  font-size: 1.5rem;
+}
+
+.modal-content p {
+  color: var(--text-color-light);
+  margin-bottom: 1.5rem;
+}
+
+.modal-input {
+  margin-bottom: 2rem;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 1rem;
 }
 </style>

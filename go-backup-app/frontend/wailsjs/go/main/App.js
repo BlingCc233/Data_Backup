@@ -14,6 +14,6 @@ export function StartBackup(arg1) {
   return window['go']['main']['App']['StartBackup'](arg1);
 }
 
-export function StartRestore(arg1, arg2, arg3) {
-  return window['go']['main']['App']['StartRestore'](arg1, arg2, arg3);
+export function StartRestore(arg1) {
+  return window['go']['main']['App']['StartRestore'](arg1);
 }

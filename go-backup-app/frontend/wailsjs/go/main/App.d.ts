@@ -8,4 +8,4 @@ export function SelectFile():Promise<string>;
 
 export function StartBackup(arg1:main.BackupConfig):Promise<string>;
 
-export function StartRestore(arg1:string,arg2:string,arg3:string):Promise<string>;
+export function StartRestore(arg1:main.RestoreConfig):Promise<string>;
