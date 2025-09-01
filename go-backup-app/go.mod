@@ -3,6 +3,7 @@ module go-backup-app
 go 1.23
 
 require (
+	github.com/cloudflare/circl v1.3.7
 	github.com/stretchr/testify v1.10.0
 	github.com/wailsapp/wails/v2 v2.10.2
 	golang.org/x/crypto v0.33.0
