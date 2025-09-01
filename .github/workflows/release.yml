@@ -22,7 +22,7 @@ jobs:
             asset_name_suffix: windows-amd64.exe
           - os: macos-latest
             platform: darwin
-            arch: universal
+            # arch: universal -> 这个参数在 macOS 构建中不再直接使用
             asset_name_suffix: darwin-universal.zip
 
     runs-on: ${{ matrix.os }}
@@ -47,7 +47,6 @@ jobs:
           node-version: '20'
           cache-dependency-path: go-backup-app/frontend/package-lock.json
 
-      # 4. (仅 Linux) 安装 CGO 依赖
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
         run: |
@@ -74,9 +73,16 @@ jobs:
           echo "ASSET_NAME=${PROJECT_NAME}-${VERSION}-${{ matrix.asset_name_suffix }}" >> $GITHUB_ENV
           echo "BINARY_PATH=build/bin/${PROJECT_NAME}" >> $GITHUB_ENV
 
-      - name: Build Wails Application
+      # 8. 构建 Wails 应用
+      - name: Build Wails Application (macOS)
+        if: runner.os == 'macOS'
+        run: wails build -platform darwin -universal -ldflags="-s -w"
+
+      - name: Build Wails Application (Linux/Windows)
+        if: runner.os != 'macOS'
         run: wails build -platform ${{ matrix.platform }} -arch ${{ matrix.arch }} -ldflags="-s -w"
 
+      # 9. 打包资源文件
       - name: Package Asset
         shell: bash
         run: |
@@ -86,6 +92,7 @@ jobs:
             mv "${{ env.BINARY_PATH}}$( [ "${{ matrix.os }}" == "windows-latest" ] && echo ".exe" )" "${{ env.ASSET_NAME }}"
           fi
 
+      # 10. 创建 Release 并上传构建产物
       - name: Create Release and Upload Asset
         uses: ncipollo/release-action@v1
         with:
