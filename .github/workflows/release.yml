@@ -12,18 +12,29 @@ jobs:
     strategy:
       matrix:
         include:
+          # Linux build
           - os: ubuntu-latest
             platform: linux
             arch: amd64
             asset_name_suffix: linux-amd64
+          # Windows build
           - os: windows-latest
             platform: windows
             arch: amd64
             asset_name_suffix: windows-amd64.exe
+          # =========================================================
+          # 关键修复: 将 macOS Universal 构建拆分为两个独立的构建任务
+          # 1. macOS build for Intel (amd64)
           - os: macos-latest
             platform: darwin
-            # arch: universal -> 这个参数在 macOS 构建中不再直接使用
-            asset_name_suffix: darwin-universal.zip
+            arch: amd64
+            asset_name_suffix: darwin-amd64.zip
+          # 2. macOS build for Apple Silicon (arm64)
+          - os: macos-latest
+            platform: darwin
+            arch: arm64
+            asset_name_suffix: darwin-arm64.zip
+          # =========================================================
 
     runs-on: ${{ matrix.os }}
 
@@ -74,12 +85,8 @@ jobs:
           echo "BINARY_PATH=build/bin/${PROJECT_NAME}" >> $GITHUB_ENV
 
       # 8. 构建 Wails 应用
-      - name: Build Wails Application (macOS)
-        if: runner.os == 'macOS'
-        run: wails build -platform darwin -universal -ldflags="-s -w"
-
-      - name: Build Wails Application (Linux/Windows)
-        if: runner.os != 'macOS'
+      # 关键修复: 恢复为统一的构建命令，因为现在矩阵中的所有 arch 参数都是 wails build 直接支持的
+      - name: Build Wails Application
         run: wails build -platform ${{ matrix.platform }} -arch ${{ matrix.arch }} -ldflags="-s -w"
 
       # 9. 打包资源文件
