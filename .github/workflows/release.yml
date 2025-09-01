@@ -9,6 +9,12 @@ on:
 
 jobs:
   build-and-release:
+    # =========================================================
+    # 关键修复: 为此 Job 授予写入权限，以允许 release-action 创建 Release
+    permissions:
+      contents: write
+    # =========================================================
+
     strategy:
       matrix:
         include:
@@ -65,8 +71,6 @@ jobs:
           cd frontend
           npm install
 
-      # =========================================================
-      # 关键修复: 为此步骤指定 bash shell，以确保脚本在所有平台（包括 Windows）上都能正确执行
       - name: Set Environment Variables
         shell: bash
         run: |
@@ -78,13 +82,10 @@ jobs:
           
           echo "ASSET_NAME=${PROJECT_NAME}-${VERSION}-${{ matrix.asset_name_suffix }}" >> $GITHUB_ENV
           echo "BINARY_PATH=build/bin/${PROJECT_NAME}" >> $GITHUB_ENV
-      # =========================================================
 
-      # 构建 Wails 应用 (已修正，确保使用正确的平台和架构)
       - name: Build Wails Application
         run: wails build -platform ${{ matrix.platform }} -ldflags="-s -w"
 
-      # 打包资源文件
       - name: Package Asset
         shell: bash
         run: |
@@ -94,7 +95,6 @@ jobs:
             mv "${{ env.BINARY_PATH}}$( [ "${{ matrix.os }}" == "windows-latest" ] && echo ".exe" )" "${{ env.ASSET_NAME }}"
           fi
 
-      # 创建 Release 并上传构建产物
       - name: Create Release and Upload Asset
         uses: ncipollo/release-action@v1
         with:
