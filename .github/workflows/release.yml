@@ -20,11 +20,11 @@ jobs:
             platform: windows
             arch: amd64
             asset_name_suffix: windows-amd64.exe
-          # macOS build for Apple Silicon (arm64)
+          # macOS build for Apple Silicon (arm64) - Changed to DMG
           - os: macos-latest
             platform: darwin
             arch: arm64
-            asset_name_suffix: darwin-arm64.zip
+            asset_name_suffix: darwin-arm64.dmg # <-- 1. 变更点：后缀从 .zip 改为 .dmg
 
     runs-on: ${{ matrix.os }}
 
@@ -56,6 +56,11 @@ jobs:
           cd frontend
           npm install
 
+      # <-- 2. 新增步骤：为 macOS 安装 DMG 创建工具
+      - name: Install create-dmg (macOS only)
+        if: matrix.os == 'macos-latest'
+        run: brew install create-dmg
+
       - name: Set Environment Variables
         shell: bash
         run: |
@@ -71,12 +76,25 @@ jobs:
       - name: Build Wails Application
         run: wails build -platform ${{ matrix.platform }} -ldflags="-s -w"
 
+      # <-- 3. 变更点：修改打包逻辑
       - name: Package Asset
         shell: bash
         run: |
           if [ "${{ matrix.os }}" == "macos-latest" ]; then
-            zip -r "${{ env.ASSET_NAME }}" "build/bin/"*.app
+            # 使用 create-dmg 创建 DMG 文件
+            APP_PATH="build/bin/${PROJECT_NAME}.app"
+            create-dmg \
+              --volname "${PROJECT_NAME} ${VERSION}" \
+              --window-pos 200 120 \
+              --window-size 800 400 \
+              --icon-size 100 \
+              --icon "${PROJECT_NAME}.app" 200 190 \
+              --hide-extension "${PROJECT_NAME}.app" \
+              --app-drop-link 600 185 \
+              "${{ env.ASSET_NAME }}" \
+              "${APP_PATH}"
           else
+            # Windows 的逻辑保持不变
             mv "${{ env.BINARY_PATH}}$( [ "${{ matrix.os }}" == "windows-latest" ] && echo ".exe" )" "${{ env.ASSET_NAME }}"
           fi
 
