@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// 测试自定义的 SHA256 实现是否与标准向量匹配
+// 测试我的 SHA256 实现
 func TestCustomSHA256(t *testing.T) {
 	testCases := []struct {
 		name   string

@@ -11,17 +11,15 @@ import (
 	"math/bits"
 )
 
-// --- 自定义 SHA-256 实现 ---
-// 该实现遵循 FIPS 180-4 标准，用于替代 crypto/sha256
+// --- CC的 SHA-256 实现 ---
+// 该实现遵循 FIPS 180-4 标准
 
 const (
-	// sha256Size 是SHA256校验和的字节大小
-	sha256Size = 32
-	// sha256BlockSize 是SHA256哈希算法的块大小
-	sha256BlockSize = 64
+	sha256Size      = 32 // SHA256校验和的字节大小
+	sha256BlockSize = 64 //  SHA256哈希算法的块大小
 )
 
-// K 是 SHA-256 的轮常量
+// SHA-256 的轮常量
 var K = [64]uint32{
 	0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
 	0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
@@ -33,7 +31,7 @@ var K = [64]uint32{
 	0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
 }
 
-// H0 是 SHA-256 的初始哈希值
+// SHA-256 的初始哈希值
 var H0 = [8]uint32{
 	0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
 }
@@ -51,7 +49,6 @@ func (d *digest) Reset() {
 	d.len = 0
 }
 
-// New 返回一个新的实现了 hash.Hash 接口的 SHA256 哈希
 func New() *digest {
 	d := new(digest)
 	d.Reset()
@@ -86,7 +83,6 @@ func (d *digest) Write(p []byte) (nn int, err error) {
 }
 
 func (d *digest) Sum(in []byte) []byte {
-	// 制作副本以保持原始状态
 	d0 := *d
 	hash := d0.checkSum()
 	return append(in, hash[:]...)
@@ -176,7 +172,7 @@ func block(dig *digest, p []byte) {
 	dig.h = h
 }
 
-// --- 核心加密代码 ---
+// --- 加密 ---
 
 var (
 	magicHeader         = []byte("QBAKENCR")
@@ -192,7 +188,7 @@ const (
 	AlgoChaCha20   = 0x02
 )
 
-// --- 密钥派生 (PBKDF2 手工实现) ---
+// --- 密钥派生 (PBKDF2 CC的实现) ---
 
 func pbkdf2(password, salt []byte, iter, keyLen int) []byte {
 	hashLen := sha256Size
@@ -258,7 +254,7 @@ func deriveKey(password string, salt []byte) []byte {
 	return pbkdf2([]byte(password), salt, 4096, 32)
 }
 
-// --- AES-256 完整实现 ---
+// --- AES-256 CC的实现 ---
 
 var sbox = [256]byte{
 	0x63, 0x7c, 0x77, 0x7b, 0xf2, 0x6b, 0x6f, 0xc5, 0x30, 0x01, 0x67, 0x2b, 0xfe, 0xd7, 0xab, 0x76,
@@ -434,7 +430,7 @@ func (aes *AES) addRoundKey(state [][]byte, round int) {
 	}
 }
 
-// --- ChaCha20 完整实现 ---
+// --- ChaCha20 CC的实现 ---
 
 type ChaCha20 struct {
 	key     [8]uint32
@@ -789,7 +785,7 @@ func NewDecryptedReader(r io.Reader, password string) (io.Reader, error) {
 }
 
 // --- 实用工具函数 ---
-
+// TODO
 // 检查文件是否为加密文件
 func IsEncryptedFile(r io.Reader) (bool, uint8, error) {
 	header := make([]byte, len(magicHeader))

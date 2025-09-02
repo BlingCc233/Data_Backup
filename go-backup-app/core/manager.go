@@ -21,7 +21,7 @@ func NewBackupManager(ctx context.Context) *BackupManager {
 	return &BackupManager{ctx: ctx}
 }
 
-// Backup 执行备份流程 (增加了压缩和加密参数)
+// Backup 执行备份
 func (m *BackupManager) Backup(srcDir, destFile string, filters FilterConfig, useCompression bool, useEncryption bool, algorithm uint8, password string) error {
 	outFile, err := os.Create(destFile)
 	if err != nil {
@@ -31,24 +31,23 @@ func (m *BackupManager) Backup(srcDir, destFile string, filters FilterConfig, us
 
 	var writer io.WriteCloser = outFile
 
-	// 步骤 1: 应用加密 (如果需要)
+	// 加密 (可选)
 	if useEncryption {
 		log.Println("Encryption enabled for backup.")
-		// NewEncryptedWriter 接收的 writer 可能是 outFile，也可能是 compressedWriter
 		encryptedWriter, err := NewEncryptedWriter(writer, password, algorithm)
 		if err != nil {
 			return fmt.Errorf("failed to create encrypted writer: %w", err)
 		}
-		writer = encryptedWriter // 再次替换写入器
+		writer = encryptedWriter
 		defer writer.Close()
 	}
-	// 步骤 2: 应用压缩 (如果需要)
-	// 压缩应该在加密之前，这样加密算法处理的是熵更高的数据，现在这样写就是正确的顺序
+
+	// 压缩（默认）
 	if useCompression {
 		log.Println("Compression enabled for backup.")
-		compressedWriter := NewCompressedWriter(writer) // 注意：这里 writer 还是 outFile
-		writer = compressedWriter                       // 将写入器替换为压缩写入器
-		defer writer.Close()                            // 确保 Close 被调用以触发压缩
+		compressedWriter := NewCompressedWriter(writer)
+		writer = compressedWriter
+		defer writer.Close()
 	}
 
 	archiveWriter := NewArchiveWriter(writer)
@@ -102,12 +101,13 @@ func (m *BackupManager) Restore(backupFile, restoreDir string, password string) 
 		return fmt.Errorf("failed to open backup file: %w", err)
 	}
 	defer inFile.Close()
-
+	// TODO
+	// bufio 重构
 	//bReader := bufio.NewReader(inFile)
 	//var reader io.Reader = bReader
 	var reader io.Reader = inFile
 
-	// --- 步骤 1: 健壮地检测加密 ---
+	// --- 检测加密 ---
 	decryptedReader, err := NewDecryptedReader(inFile, password)
 	if err != nil {
 		if errors.Is(err, ErrInvalidMagic) {
@@ -118,23 +118,23 @@ func (m *BackupManager) Restore(backupFile, restoreDir string, password string) 
 				return seekErr
 			}
 		} else {
-			// 其他错误（包括 ErrPasswordRequired）直接返回
+			// ErrPasswordRequired直接返回
 			return err
 		}
 	} else {
-		// 解密成功，替换读取器
 		log.Println("Encrypted file detected, proceeding with decryption.")
 		reader = bufio.NewReader(decryptedReader)
 	}
 
-	// --- 步骤 2: 健壮地检测压缩 ---
-	// 此时的 reader 可能是原始文件流，也可能是解密后的流
+	// --- 步骤 2: 解压缩 ---
 	log.Println("Compressed data detected, proceeding with decompression.")
 	compressedReader, err := NewCompressedReader(reader) // NewCompressedReader 会消耗掉 magic
 	if err != nil {
 		return fmt.Errorf("failed to create decompressor: %w", err)
 	}
-	reader = compressedReader // 将 reader 替换为解压后的流
+	reader = compressedReader
+
+	// TODO
 	// "偷看"当前流的头部，判断是否是压缩格式
 	//huffMagicBytes, err := reader.(*bufio.Reader).Peek(len(huffmanMagic))
 	//if err == nil && bytes.Equal(huffMagicBytes, huffmanMagic) {
@@ -149,7 +149,6 @@ func (m *BackupManager) Restore(backupFile, restoreDir string, password string) 
 	//}
 
 	// --- 步骤 3: 读取存档 ---
-	// 此时的 reader 已经是最终的、纯净的存档数据流了
 	archiveReader := NewArchiveReader(reader)
 
 	for {
@@ -165,7 +164,6 @@ func (m *BackupManager) Restore(backupFile, restoreDir string, password string) 
 		log.Printf("Restoring: %s", destPath)
 		runtime.EventsEmit(m.ctx, "restore_progress", fmt.Sprintf("Extracting: %s", meta.Path))
 
-		// ... (恢复文件/目录/元数据的逻辑完全不变) ...
 		switch {
 		case meta.IsLink:
 			if err := os.Symlink(meta.LinkDest, destPath); err != nil {

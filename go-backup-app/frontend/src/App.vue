@@ -171,12 +171,12 @@ const filters = ref({
   excludeNames: '',
   minSizeValue: 0,
   minSizeUnit: 'Bytes',
-  maxSizeValue: 0,
+  maxSizeValue: -1,
   maxSizeUnit: 'Bytes',
   newerThan: null,
   olderThan: null,
 });
-const encryption = reactive({ // Use reactive for the object
+const encryption = reactive({
   enabled: false,
   password: '',
   algorithm: 'AES-256',
@@ -310,7 +310,7 @@ async function doRestore(password) {
   }
 }
 
-// --- 新增：处理模态框的函数 ---
+
 
 function submitPasswordAndRetryRestore() {
   if (!restorePasswordInput.value) {

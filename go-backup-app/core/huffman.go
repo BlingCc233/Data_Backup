@@ -19,7 +19,7 @@ type huffmanNode struct {
 	minChar byte // 用于在频率相同时作为排序的次要依据
 }
 
-// nodeQueue 是用于构建树的优先队列（用切片和排序实现）
+// nodeQueue 是用于构建树的优先队列
 type nodeQueue []*huffmanNode
 
 func (nq nodeQueue) Len() int      { return len(nq) }
@@ -135,14 +135,6 @@ func (hw *huffmanWriter) Write(p []byte) (int, error) {
 	return hw.buffer.Write(p)
 }
 
-// --- !!! MAJOR CHANGE START HERE !!! ---
-
-// serializeFreqTable serializes the frequency table to a compact binary format.
-// Format:
-// - Number of unique characters (uint16)
-// - For each character:
-//   - Character value (byte)
-//   - Frequency (uint64)
 func serializeFreqTable(freqTable map[byte]int64) ([]byte, error) {
 	var buf bytes.Buffer
 
@@ -195,31 +187,24 @@ func (hw *huffmanWriter) Close() error {
 	codes := make(map[byte]string)
 	generateCodes(tree, "", codes)
 
-	// 1. Serialize frequency table into a compact binary format
 	headerBytes, err := serializeFreqTable(freqTable)
 	if err != nil {
 		return fmt.Errorf("failed to marshal huffman frequency table: %w", err)
 	}
 	headerLen := uint32(len(headerBytes))
 
-	// 2. Write Magic Number
 	if _, err := hw.w.Write(huffmanMagic); err != nil {
 		return fmt.Errorf("failed to write huffman magic: %w", err)
 	}
-	// 3. Write header length
 	if err := binary.Write(hw.w, binary.BigEndian, headerLen); err != nil {
 		return fmt.Errorf("failed to write huffman header length: %w", err)
 	}
-	// 4. Write header
 	if _, err := hw.w.Write(headerBytes); err != nil {
 		return fmt.Errorf("failed to write huffman header: %w", err)
 	}
-	// 5. Write original data length
 	if err := binary.Write(hw.w, binary.BigEndian, originalLen); err != nil {
 		return fmt.Errorf("failed to write original data length: %w", err)
 	}
-
-	// 6. Write compressed data
 	bw := newBitWriter(hw.w)
 	for _, b := range originalData {
 		code := codes[b]
@@ -230,7 +215,6 @@ func (hw *huffmanWriter) Close() error {
 		}
 	}
 
-	// 7. Flush any remaining bits
 	return bw.Flush()
 }
 
@@ -348,8 +332,6 @@ func NewCompressedReader(r io.Reader) (io.Reader, error) {
 		totalSize:  originalLen,
 	}, nil
 }
-
-// --- !!! MAJOR CHANGE END HERE !!! ---
 
 func (hr *huffmanReader) Read(p []byte) (n int, err error) {
 	if hr.decoded >= hr.totalSize {

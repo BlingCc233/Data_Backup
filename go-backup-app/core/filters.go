@@ -34,6 +34,8 @@ func (fc *FilterConfig) ShouldInclude(path string, info os.FileInfo) bool {
 	//       如果定义了 Include 规则，则必须至少匹配一个 Include 规则。
 
 	// 1. 路径筛选 (Exclude)
+	// TODO
+
 	for _, excludePath := range fc.ExcludePaths {
 		if strings.HasPrefix(path, excludePath) {
 			return false // 被排除路径匹配
@@ -87,6 +89,8 @@ func (fc *FilterConfig) ShouldInclude(path string, info os.FileInfo) bool {
 			}
 		}
 		if !pathIncluded {
+			// TODO
+
 			// 如果是目录，我们不能立即排除它，因为它的子文件可能匹配
 			// 如果是文件，并且路径不匹配，则排除
 			if !info.IsDir() {
@@ -96,7 +100,6 @@ func (fc *FilterConfig) ShouldInclude(path string, info os.FileInfo) bool {
 	}
 
 	// 6. 名称筛选 (Include)
-	// 如果定义了 IncludeNames，则名称必须匹配其中之一
 	if len(fc.IncludeNames) > 0 {
 		nameIncluded := false
 		for _, includeName := range fc.IncludeNames {
@@ -111,7 +114,6 @@ func (fc *FilterConfig) ShouldInclude(path string, info os.FileInfo) bool {
 		}
 	}
 
-	// 通过所有检查
 	log.Printf("Filter PASSED for: %s", path)
 	return true
 }

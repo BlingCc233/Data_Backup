@@ -39,12 +39,12 @@ func (a *App) SelectFile() (string, error) {
 	})
 }
 
-// BackupConfig 定义了备份任务的配置 (增加了压缩和加密字段)
+// BackupConfig 备份任务的配置
 type BackupConfig struct {
 	SourceDir           string            `json:"sourceDir"`
 	DestinationDir      string            `json:"destinationDir"`
 	Filters             core.FilterConfig `json:"filters"`
-	UseCompression      bool              `json:"useCompression"` // ADDED: 新增压缩选项
+	UseCompression      bool              `json:"useCompression"`
 	UseEncryption       bool              `json:"useEncryption"`
 	EncryptionAlgorithm string            `json:"encryptionAlgorithm"` // "AES-256", "ChaCha20"
 	EncryptionPassword  string            `json:"encryptionPassword"`
@@ -52,7 +52,6 @@ type BackupConfig struct {
 
 // StartBackup 暴露给前端的备份函数 (修改了逻辑以处理压缩和加密)
 func (a *App) StartBackup(config BackupConfig) (string, error) {
-	// 现有的日志记录会自动包含新的 useCompression 字段，非常方便调试
 	log.Printf("Starting backup with config: %+v\n", config)
 
 	timestamp := time.Now().Format("2006-01-02_15-04-05")
@@ -77,7 +76,6 @@ func (a *App) StartBackup(config BackupConfig) (string, error) {
 	}
 
 	manager := core.NewBackupManager(a.ctx)
-	// MODIFIED: 调用 manager.Backup 时，传入新的压缩参数
 	err := manager.Backup(
 		config.SourceDir,
 		destinationFile,
@@ -102,8 +100,7 @@ type RestoreConfig struct {
 	Password   string `json:"password"`
 }
 
-// StartRestore 暴露给前端的恢复函数 (无需任何改动)
-// 核心逻辑中的 Restore 方法会自动检测文件是否被压缩
+// StartRestore 暴露给前端的恢复函数
 func (a *App) StartRestore(config RestoreConfig) (string, error) {
 	log.Printf("Starting restore with config: %+v\n", config)
 
