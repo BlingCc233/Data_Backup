@@ -55,6 +55,7 @@ export namespace main {
 	    sourceDir: string;
 	    destinationDir: string;
 	    filters: core.FilterConfig;
+	    useCompression: boolean;
 	    useEncryption: boolean;
 	    encryptionAlgorithm: string;
 	    encryptionPassword: string;
@@ -68,6 +69,7 @@ export namespace main {
 	        this.sourceDir = source["sourceDir"];
 	        this.destinationDir = source["destinationDir"];
 	        this.filters = this.convertValues(source["filters"], core.FilterConfig);
+	        this.useCompression = source["useCompression"];
 	        this.useEncryption = source["useEncryption"];
 	        this.encryptionAlgorithm = source["encryptionAlgorithm"];
 	        this.encryptionPassword = source["encryptionPassword"];

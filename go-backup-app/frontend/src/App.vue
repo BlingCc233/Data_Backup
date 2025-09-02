@@ -253,6 +253,7 @@ async function doBackup() {
       sourceDir: backupSource.value,
       destinationDir: backupDest.value,
       filters: backendFilters,
+      UseCompression: true,
       // Pass encryption config
       useEncryption: encryption.enabled,
       encryptionAlgorithm: encryption.algorithm,

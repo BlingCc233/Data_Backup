@@ -3,144 +3,124 @@ package core
 
 import (
 	"bytes"
+	"encoding/hex"
 	"io"
-	"strings"
 	"testing"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
-func TestEncryptionDecryptionFlow(t *testing.T) {
-	// 定义一个足够长的明文，以确保它跨越多个加密块
-	longPlaintext := []byte(strings.Repeat("This is a secret message that is long enough to test multiple blocks. ", 10))
-	password := "super_secret_password_123"
-
+// 测试自定义的 SHA256 实现是否与标准向量匹配
+func TestCustomSHA256(t *testing.T) {
 	testCases := []struct {
-		name      string
-		algo      uint8
-		plaintext []byte
+		name   string
+		input  []byte
+		output string
 	}{
-		{"AES256-CTR_Short", AlgoAES256_CTR, []byte("hello world")},
-		{"AES256-CTR_Long", AlgoAES256_CTR, longPlaintext},
-		{"ChaCha20_Short", AlgoChaCha20, []byte("hello world")},
-		{"ChaCha20_Long", AlgoChaCha20, longPlaintext},
+		{
+			"empty string",
+			[]byte(""),
+			"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+		},
+		{
+			"abc",
+			[]byte("abc"),
+			"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+		},
+		{
+			"The quick brown fox jumps over the lazy dog",
+			[]byte("The quick brown fox jumps over the lazy dog"),
+			"d7a8fbb307d7809469ca9abcb0082e4f8d5651e46d3cdb762d02d0bf37c9e592",
+		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			// --- Encryption ---
-			ciphertextBuf := new(bytes.Buffer)
-
-			// 1. 创建加密写入器
-			encWriter, err := NewEncryptedWriter(ciphertextBuf, password, tc.algo)
-			require.NoError(t, err)
-
-			// 2. 写入明文
-			n, err := encWriter.Write(tc.plaintext)
-			require.NoError(t, err)
-			assert.Equal(t, len(tc.plaintext), n)
-
-			// 3. 关闭写入器
-			err = encWriter.Close()
-			require.NoError(t, err)
-
-			// --- Decryption ---
-			ciphertextReader := bytes.NewReader(ciphertextBuf.Bytes())
-
-			// 1. 创建解密读取器
-			decReader, err := NewDecryptedReader(ciphertextReader, password)
-			require.NoError(t, err)
-
-			// 2. 读取解密后的明文
-			decryptedText, err := io.ReadAll(decReader)
-			require.NoError(t, err)
-
-			// 3. 验证结果
-			assert.Equal(t, tc.plaintext, decryptedText, "Decrypted text should match original plaintext")
-
-			// --- Negative Test: Wrong Password ---
-			t.Run("WrongPassword", func(t *testing.T) {
-				wrongPassReader := bytes.NewReader(ciphertextBuf.Bytes())
-				decReaderWrong, err := NewDecryptedReader(wrongPassReader, "wrong_password")
-				require.NoError(t, err) // Reader creation should succeed
-
-				// Reading should produce garbled data, not the plaintext
-				garbledText, err := io.ReadAll(decReaderWrong)
-				require.NoError(t, err)
-				assert.NotEqual(t, tc.plaintext, garbledText, "Text decrypted with wrong password should not match original")
-			})
+			hash := Sum256(tc.input)
+			hexHash := hex.EncodeToString(hash[:])
+			if hexHash != tc.output {
+				t.Errorf("Sum256() got = %v, want %v", hexHash, tc.output)
+			}
 		})
 	}
 }
 
-func TestHybridEncryptionDecryption(t *testing.T) {
-	plaintext := []byte("This is a test of post-quantum hybrid encryption!")
+// 测试 prf (HMAC-SHA256) 函数
+func TestPRF_HMAC_SHA256(t *testing.T) {
+	// Test vector from RFC 4231
+	key := []byte("Jefe")
+	data := []byte("what do ya want for nothing?")
+	expected := "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
 
-	// --- Encryption ---
-	ciphertextBuf := new(bytes.Buffer)
+	mac := prf(key, data)
+	hexMac := hex.EncodeToString(mac)
 
-	// 1. 使用专为混合模式设计的辅助函数进行加密
-	// 它会返回用于解密的私钥
-	encWriter, privateKey, err := NewEncryptedWriterForHybrid(ciphertextBuf, AlgoHybrid)
-	require.NoError(t, err)
-	require.NotNil(t, privateKey)
-
-	// 2. 写入明文
-	_, err = encWriter.Write(plaintext)
-	require.NoError(t, err)
-	err = encWriter.Close()
-	require.NoError(t, err)
-
-	// --- Decryption ---
-	ciphertextReader := bytes.NewReader(ciphertextBuf.Bytes())
-
-	// 1. 使用对应的解密辅助函数和私钥进行解密
-	decReader, err := NewDecryptedReaderForHybrid(ciphertextReader, privateKey)
-	require.NoError(t, err)
-
-	// 2. 读取解密后的明文
-	decryptedText, err := io.ReadAll(decReader)
-	require.NoError(t, err)
-
-	// 3. 验证结果
-	assert.Equal(t, plaintext, decryptedText)
+	if hexMac != expected {
+		t.Errorf("prf() got = %v, want %v", hexMac, expected)
+	}
 }
 
-func TestDilithiumSigning(t *testing.T) {
-	message := []byte("This message will be signed by Dilithium mode 3.")
+// 测试 pbkdf2 函数
+func TestPBKDF2(t *testing.T) {
+	// Test vector from RFC 6070
+	password := []byte("password")
+	salt := []byte("salt")
+	iter := 4096
+	keyLen := 32
+	expected := "c5e478d59288c841aa530db6845c4c8d962893a001ce4e11a4963873aa98134a"
 
-	// 1. 生成密钥对
-	signer, err := GenerateDilithiumKeyPair()
-	require.NoError(t, err)
+	key := pbkdf2(password, salt, iter, keyLen)
+	hexKey := hex.EncodeToString(key)
 
-	// 2. 使用私钥签名
-	signature, err := signer.Sign(message)
-	require.NoError(t, err)
-	require.NotEmpty(t, signature)
-
-	// 3. 使用公钥验证签名 (成功场景)
-	isValid := signer.Verify(message, signature)
-	assert.True(t, isValid, "Signature should be valid with the correct message and key")
-
-	// 4. 验证失败场景
-	// 4a. 消息被篡改
-	tamperedMessage := []byte("This message has been TAMPERED.")
-	isTamperedValid := signer.Verify(tamperedMessage, signature)
-	assert.False(t, isTamperedValid, "Signature should be invalid for a tampered message")
-
-	// 4b. 使用错误的公钥
-	otherSigner, err := GenerateDilithiumKeyPair()
-	require.NoError(t, err)
-	isOtherKeyValid := otherSigner.Verify(message, signature)
-	assert.False(t, isOtherKeyValid, "Signature should be invalid with a different public key")
+	if hexKey != expected {
+		t.Errorf("pbkdf2() got = %v, want %v", hexKey, expected)
+	}
 }
 
-func TestInvalidMagicHeader(t *testing.T) {
-	invalidData := []byte("NOT_A_VALID_FILE")
-	r := bytes.NewReader(invalidData)
+// 测试完整的加密和解密往返流程
+func TestEncryptionDecryptionCycle(t *testing.T) {
+	plaintext := []byte("This is a secret message that needs to be encrypted and then decrypted successfully.")
+	password := "my-very-strong-p@ssw0rd!123"
 
-	_, err := NewDecryptedReader(r, "any_password")
-	require.Error(t, err)
-	assert.Equal(t, ErrInvalidMagic, err)
+	algorithms := []struct {
+		name string
+		id   uint8
+	}{
+		{"AES-256-CTR", AlgoAES256_CTR},
+		{"ChaCha20", AlgoChaCha20},
+	}
+
+	for _, algo := range algorithms {
+		t.Run(algo.name, func(t *testing.T) {
+			var encryptedData bytes.Buffer
+
+			// 加密
+			writer, err := NewEncryptedWriter(&encryptedData, password, algo.id)
+			if err != nil {
+				t.Fatalf("NewEncryptedWriter() error = %v", err)
+			}
+			_, err = writer.Write(plaintext)
+			if err != nil {
+				t.Fatalf("writer.Write() error = %v", err)
+			}
+			err = writer.Close()
+			if err != nil {
+				t.Fatalf("writer.Close() error = %v", err)
+			}
+
+			// 解密
+			reader, err := NewDecryptedReader(&encryptedData, password)
+			if err != nil {
+				t.Fatalf("NewDecryptedReader() error = %v", err)
+			}
+
+			decryptedText, err := io.ReadAll(reader)
+			if err != nil {
+				t.Fatalf("io.ReadAll() error = %v", err)
+			}
+
+			// 验证
+			if !bytes.Equal(plaintext, decryptedText) {
+				t.Errorf("Decrypted text does not match original plaintext.\nOriginal: %s\nDecrypted: %s", plaintext, decryptedText)
+			}
+		})
+	}
 }

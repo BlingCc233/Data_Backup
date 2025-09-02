@@ -4,49 +4,263 @@ package core
 import (
 	"bytes"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
-
-	// PQC后量子密码学库
-	"github.com/cloudflare/circl/kem/kyber/kyber768"   // Kyber KEM
-	"github.com/cloudflare/circl/sign/dilithium/mode3" // Dilithium签名
-	"golang.org/x/crypto/pbkdf2"
+	"math/bits"
 )
 
-// 安全警告: AES和ChaCha20的完整实现仅为教学和理解目的
-// 生产环境建议使用经过充分测试的标准库实现
+// --- 自定义 SHA-256 实现 ---
+// 该实现遵循 FIPS 180-4 标准，用于替代 crypto/sha256
+
+const (
+	// sha256Size 是SHA256校验和的字节大小
+	sha256Size = 32
+	// sha256BlockSize 是SHA256哈希算法的块大小
+	sha256BlockSize = 64
+)
+
+// K 是 SHA-256 的轮常量
+var K = [64]uint32{
+	0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+	0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+	0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+	0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+	0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+	0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+	0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+	0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+}
+
+// H0 是 SHA-256 的初始哈希值
+var H0 = [8]uint32{
+	0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+}
+
+type digest struct {
+	h   [8]uint32
+	x   [sha256BlockSize]byte
+	nx  int
+	len uint64
+}
+
+func (d *digest) Reset() {
+	d.h = H0
+	d.nx = 0
+	d.len = 0
+}
+
+// New 返回一个新的实现了 hash.Hash 接口的 SHA256 哈希
+func New() *digest {
+	d := new(digest)
+	d.Reset()
+	return d
+}
+
+func (d *digest) Size() int { return sha256Size }
+
+func (d *digest) BlockSize() int { return sha256BlockSize }
+
+func (d *digest) Write(p []byte) (nn int, err error) {
+	nn = len(p)
+	d.len += uint64(nn)
+	if d.nx > 0 {
+		n := copy(d.x[d.nx:], p)
+		d.nx += n
+		if d.nx == sha256BlockSize {
+			block(d, d.x[:])
+			d.nx = 0
+		}
+		p = p[n:]
+	}
+	if len(p) >= sha256BlockSize {
+		n := len(p) &^ (sha256BlockSize - 1)
+		block(d, p[:n])
+		p = p[n:]
+	}
+	if len(p) > 0 {
+		d.nx = copy(d.x[:], p)
+	}
+	return
+}
+
+func (d *digest) Sum(in []byte) []byte {
+	// 制作副本以保持原始状态
+	d0 := *d
+	hash := d0.checkSum()
+	return append(in, hash[:]...)
+}
+
+func (d *digest) checkSum() [sha256Size]byte {
+	len := d.len
+	// 填充: 添加 1 bit
+	var tmp [sha256BlockSize]byte
+	tmp[0] = 0x80
+	if len%sha256BlockSize < 56 {
+		d.Write(tmp[0 : 56-len%sha256BlockSize])
+	} else {
+		d.Write(tmp[0 : sha256BlockSize+56-len%sha256BlockSize])
+	}
+
+	// 填充: 添加长度
+	binary.BigEndian.PutUint64(tmp[:], len<<3)
+	d.Write(tmp[0:8])
+
+	if d.nx != 0 {
+		panic("d.nx != 0")
+	}
+
+	var digest [sha256Size]byte
+	for i, s := range d.h {
+		binary.BigEndian.PutUint32(digest[i*4:], s)
+	}
+	return digest
+}
+
+// Sum256 计算数据的 SHA256 校验和
+func Sum256(data []byte) [sha256Size]byte {
+	d := New()
+	d.Write(data)
+	return d.checkSum()
+}
+
+func block(dig *digest, p []byte) {
+	var w [64]uint32
+	h := dig.h
+	for len(p) >= sha256BlockSize {
+		// 初始化消息调度数组
+		for i := 0; i < 16; i++ {
+			w[i] = binary.BigEndian.Uint32(p[i*4:])
+		}
+		for i := 16; i < 64; i++ {
+			s0 := rotateRight32(w[i-15], 7) ^ rotateRight32(w[i-15], 18) ^ (w[i-15] >> 3)
+			s1 := rotateRight32(w[i-2], 17) ^ rotateRight32(w[i-2], 19) ^ (w[i-2] >> 10)
+			w[i] = w[i-16] + s0 + w[i-7] + s1
+		}
+
+		// 初始化工作变量
+		a, b, c, d, e, f, g, h_ := h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7]
+
+		// 压缩循环
+		for i := 0; i < 64; i++ {
+			s1 := rotateRight32(e, 6) ^ rotateRight32(e, 11) ^ rotateRight32(e, 25)
+			ch := (e & f) ^ (^e & g)
+			temp1 := h_ + s1 + ch + K[i] + w[i]
+			s0 := rotateRight32(a, 2) ^ rotateRight32(a, 13) ^ rotateRight32(a, 22)
+			maj := (a & b) ^ (a & c) ^ (b & c)
+			temp2 := s0 + maj
+
+			h_ = g
+			g = f
+			f = e
+			e = d + temp1
+			d = c
+			c = b
+			b = a
+			a = temp1 + temp2
+		}
+
+		// 更新哈希值
+		h[0] += a
+		h[1] += b
+		h[2] += c
+		h[3] += d
+		h[4] += e
+		h[5] += f
+		h[6] += g
+		h[7] += h_
+
+		p = p[sha256BlockSize:]
+	}
+	dig.h = h
+}
+
+// --- 核心加密代码 ---
 
 var (
 	magicHeader         = []byte("QBAKENCR")
 	ErrInvalidMagic     = errors.New("invalid magic header: not an encrypted qbak file")
 	ErrPasswordRequired = errors.New("password is required for this encrypted file")
-	ErrInvalidPadding   = errors.New("invalid PKCS7 padding")
+	ErrInvalidKeySize   = errors.New("invalid key size")
+	ErrInvalidNonceSize = errors.New("invalid nonce size")
 )
 
 const (
-	version        = 0x01
+	version        = 0x01 // 恢复到原始版本号
 	AlgoAES256_CTR = 0x01
 	AlgoChaCha20   = 0x02
-	AlgoKyber768   = 0x03 // 后量子KEM
-	AlgoDilithium3 = 0x04 // 后量子签名
-	AlgoHybrid     = 0x05 // 混合模式：经典+后量子
-
-	// AES常量
-	AESBlockSize = 16
-	AESKeySize   = 32 // AES-256
-
-	// ChaCha20常量
-	ChaChaKeySize   = 32
-	ChaNonceSize    = 12
-	ChaChaBlockSize = 64
 )
 
-// --- 完整AES实现 ---
-// (此处省略您已提供的完整AES实现代码... )
-var sbox = [256]uint8{
+// --- 密钥派生 (PBKDF2 手工实现) ---
+
+func pbkdf2(password, salt []byte, iter, keyLen int) []byte {
+	hashLen := sha256Size
+	l := (keyLen + hashLen - 1) / hashLen
+	r := keyLen - (l-1)*hashLen
+
+	result := make([]byte, 0, l*hashLen)
+
+	for i := 1; i <= l; i++ {
+		ui := prf(password, append(salt, byte(i>>24), byte(i>>16), byte(i>>8), byte(i)))
+		u := make([]byte, len(ui))
+		copy(u, ui)
+
+		for j := 1; j < iter; j++ {
+			ui = prf(password, ui)
+			for k := range u {
+				u[k] ^= ui[k]
+			}
+		}
+		result = append(result, u...)
+	}
+
+	if r < hashLen {
+		return result[:keyLen]
+	}
+	return result[:keyLen]
+}
+
+func prf(key, data []byte) []byte {
+	// HMAC-SHA256 实现
+	blockSize := sha256BlockSize
+	if len(key) > blockSize {
+		h := Sum256(key)
+		key = h[:]
+	}
+
+	if len(key) < blockSize {
+		newKey := make([]byte, blockSize)
+		copy(newKey, key)
+		key = newKey
+	}
+
+	opad := make([]byte, blockSize)
+	ipad := make([]byte, blockSize)
+
+	for i := range key {
+		opad[i] = key[i] ^ 0x5c
+		ipad[i] = key[i] ^ 0x36
+	}
+
+	inner := New()
+	inner.Write(ipad)
+	inner.Write(data)
+	innerHash := inner.Sum(nil)
+
+	outer := New()
+	outer.Write(opad)
+	outer.Write(innerHash)
+	return outer.Sum(nil)
+}
+
+func deriveKey(password string, salt []byte) []byte {
+	return pbkdf2([]byte(password), salt, 4096, 32)
+}
+
+// --- AES-256 完整实现 ---
+
+var sbox = [256]byte{
 	0x63, 0x7c, 0x77, 0x7b, 0xf2, 0x6b, 0x6f, 0xc5, 0x30, 0x01, 0x67, 0x2b, 0xfe, 0xd7, 0xab, 0x76,
 	0xca, 0x82, 0xc9, 0x7d, 0xfa, 0x59, 0x47, 0xf0, 0xad, 0xd4, 0xa2, 0xaf, 0x9c, 0xa4, 0x72, 0xc0,
 	0xb7, 0xfd, 0x93, 0x26, 0x36, 0x3f, 0xf7, 0xcc, 0x34, 0xa5, 0xe5, 0xf1, 0x71, 0xd8, 0x31, 0x15,
@@ -70,79 +284,79 @@ var rcon = [11]uint32{
 	0x10000000, 0x20000000, 0x40000000, 0x80000000, 0x1b000000, 0x36000000,
 }
 
-type AESCipher struct {
-	roundKeys [15][4]uint32 // AES-256需要15轮密钥
+type AES struct {
+	roundKeys [15][4]uint32 // 最多14轮加1轮初始
 	rounds    int
 }
 
-func NewAESCipher(key []byte) *AESCipher {
-	if len(key) != AESKeySize {
-		panic("invalid AES key size")
+func NewAES(key []byte) (*AES, error) {
+	keyLen := len(key)
+	if keyLen != 16 && keyLen != 24 && keyLen != 32 {
+		return nil, ErrInvalidKeySize
 	}
 
-	aes := &AESCipher{rounds: 14} // AES-256有14轮
+	aes := &AES{}
+	switch keyLen {
+	case 16:
+		aes.rounds = 10
+	case 24:
+		aes.rounds = 12
+	case 32:
+		aes.rounds = 14
+	}
+
 	aes.keyExpansion(key)
-	return aes
+	return aes, nil
 }
 
-func (aes *AESCipher) keyExpansion(key []byte) {
-	// 将密钥转换为32位字
-	w := make([]uint32, 60) // AES-256需要60个字
+func (aes *AES) keyExpansion(key []byte) {
+	keyWords := len(key) / 4
 
-	for i := 0; i < 8; i++ {
-		w[i] = binary.BigEndian.Uint32(key[4*i : 4*i+4])
+	// 初始化前N个字
+	for i := 0; i < keyWords; i++ {
+		aes.roundKeys[i/4][i%4] = binary.BigEndian.Uint32(key[i*4 : (i+1)*4])
 	}
 
-	for i := 8; i < 60; i++ {
-		temp := w[i-1]
-		if i%8 == 0 {
-			temp = subWord(rotWord(temp)) ^ rcon[i/8]
-		} else if i%8 == 4 {
-			temp = subWord(temp)
+	// 生成剩余字
+	for i := keyWords; i < 4*(aes.rounds+1); i++ {
+		temp := aes.roundKeys[(i-1)/4][(i-1)%4]
+
+		if i%keyWords == 0 {
+			temp = aes.subWord(aes.rotWord(temp)) ^ rcon[i/keyWords]
+		} else if keyWords > 6 && i%keyWords == 4 {
+			temp = aes.subWord(temp)
 		}
-		w[i] = w[i-8] ^ temp
-	}
 
-	// 将字转换为轮密钥
-	for round := 0; round <= 14; round++ {
-		for j := 0; j < 4; j++ {
-			aes.roundKeys[round][j] = w[round*4+j]
-		}
+		aes.roundKeys[i/4][i%4] = aes.roundKeys[(i-keyWords)/4][(i-keyWords)%4] ^ temp
 	}
 }
 
-func rotWord(word uint32) uint32 {
-	return (word << 8) | (word >> 24)
-}
-
-func subWord(word uint32) uint32 {
-	return uint32(sbox[(word>>24)&0xff])<<24 |
+func (aes *AES) subWord(word uint32) uint32 {
+	return uint32(sbox[word>>24])<<24 |
 		uint32(sbox[(word>>16)&0xff])<<16 |
 		uint32(sbox[(word>>8)&0xff])<<8 |
 		uint32(sbox[word&0xff])
 }
 
-func (aes *AESCipher) Encrypt(block []byte) []byte {
-	if len(block) != AESBlockSize {
-		panic("invalid block size")
+func (aes *AES) rotWord(word uint32) uint32 {
+	return word<<8 | word>>24
+}
+
+func (aes *AES) Encrypt(plaintext []byte) []byte {
+	if len(plaintext) != 16 {
+		panic("AES block size must be 16 bytes")
 	}
 
-	state := make([][]uint8, 4)
+	state := make([][]byte, 4)
 	for i := range state {
-		state[i] = make([]uint8, 4)
-	}
-
-	// 将输入转换为状态矩阵
-	for i := 0; i < 4; i++ {
-		for j := 0; j < 4; j++ {
-			state[j][i] = block[i*4+j]
+		state[i] = make([]byte, 4)
+		for j := range state[i] {
+			state[i][j] = plaintext[i*4+j]
 		}
 	}
 
-	// 初始轮密钥加
 	aes.addRoundKey(state, 0)
 
-	// 主循环
 	for round := 1; round < aes.rounds; round++ {
 		aes.subBytes(state)
 		aes.shiftRows(state)
@@ -150,465 +364,307 @@ func (aes *AESCipher) Encrypt(block []byte) []byte {
 		aes.addRoundKey(state, round)
 	}
 
-	// 最后一轮（无MixColumns）
 	aes.subBytes(state)
 	aes.shiftRows(state)
 	aes.addRoundKey(state, aes.rounds)
 
-	// 转换回字节数组
-	result := make([]byte, AESBlockSize)
+	ciphertext := make([]byte, 16)
 	for i := 0; i < 4; i++ {
 		for j := 0; j < 4; j++ {
-			result[i*4+j] = state[j][i]
+			ciphertext[i*4+j] = state[i][j]
 		}
 	}
 
-	return result
+	return ciphertext
 }
 
-func (aes *AESCipher) subBytes(state [][]uint8) {
-	for i := 0; i < 4; i++ {
-		for j := 0; j < 4; j++ {
+func (aes *AES) subBytes(state [][]byte) {
+	for i := range state {
+		for j := range state[i] {
 			state[i][j] = sbox[state[i][j]]
 		}
 	}
 }
 
-func (aes *AESCipher) shiftRows(state [][]uint8) {
-	// 第0行不移位，第1行左移1位，第2行左移2位，第3行左移3位
-	temp := make([]uint8, 4)
-
-	for shift := 1; shift < 4; shift++ {
-		copy(temp, state[shift])
-		for i := 0; i < 4; i++ {
-			state[shift][i] = temp[(i+shift)%4]
+func (aes *AES) shiftRows(state [][]byte) {
+	temp := make([]byte, 4)
+	for i := 1; i < 4; i++ {
+		copy(temp, state[i])
+		for j := 0; j < 4; j++ {
+			state[i][j] = temp[(j+i)%4]
 		}
 	}
 }
 
-var mixColMatrix = [4][4]uint8{
-	{0x02, 0x03, 0x01, 0x01},
-	{0x01, 0x02, 0x03, 0x01},
-	{0x01, 0x01, 0x02, 0x03},
-	{0x03, 0x01, 0x01, 0x02},
-}
+func (aes *AES) mixColumns(state [][]byte) {
+	for c := 0; c < 4; c++ {
+		a := make([]byte, 4)
+		copy(a, []byte{state[0][c], state[1][c], state[2][c], state[3][c]})
 
-func (aes *AESCipher) mixColumns(state [][]uint8) {
-	for col := 0; col < 4; col++ {
-		temp := [4]uint8{}
-		for row := 0; row < 4; row++ {
-			temp[row] = gmul(mixColMatrix[row][0], state[0][col]) ^
-				gmul(mixColMatrix[row][1], state[1][col]) ^
-				gmul(mixColMatrix[row][2], state[2][col]) ^
-				gmul(mixColMatrix[row][3], state[3][col])
-		}
-		for row := 0; row < 4; row++ {
-			state[row][col] = temp[row]
-		}
+		state[0][c] = aes.galoisMul(a[0], 0x02) ^ aes.galoisMul(a[1], 0x03) ^ a[2] ^ a[3]
+		state[1][c] = a[0] ^ aes.galoisMul(a[1], 0x02) ^ aes.galoisMul(a[2], 0x03) ^ a[3]
+		state[2][c] = a[0] ^ a[1] ^ aes.galoisMul(a[2], 0x02) ^ aes.galoisMul(a[3], 0x03)
+		state[3][c] = aes.galoisMul(a[0], 0x03) ^ a[1] ^ a[2] ^ aes.galoisMul(a[3], 0x02)
 	}
 }
 
-func gmul(a, b uint8) uint8 {
-	result := uint8(0)
+func (aes *AES) galoisMul(a, b byte) byte {
+	p := byte(0)
 	for i := 0; i < 8; i++ {
-		if (b & 1) != 0 {
-			result ^= a
+		if b&1 != 0 {
+			p ^= a
 		}
-		hiBitSet := (a & 0x80) != 0
+		carry := a & 0x80
 		a <<= 1
-		if hiBitSet {
+		if carry != 0 {
 			a ^= 0x1b
 		}
 		b >>= 1
 	}
+	return p
+}
+
+func (aes *AES) addRoundKey(state [][]byte, round int) {
+	for i := 0; i < 4; i++ {
+		key := aes.roundKeys[round][i]
+		state[0][i] ^= byte(key >> 24)
+		state[1][i] ^= byte(key >> 16)
+		state[2][i] ^= byte(key >> 8)
+		state[3][i] ^= byte(key)
+	}
+}
+
+// --- ChaCha20 完整实现 ---
+
+type ChaCha20 struct {
+	key     [8]uint32
+	counter uint32
+	nonce   [3]uint32
+}
+
+func NewChaCha20(key []byte, nonce []byte) (*ChaCha20, error) {
+	if len(key) != 32 {
+		return nil, ErrInvalidKeySize
+	}
+	if len(nonce) != 12 {
+		return nil, ErrInvalidNonceSize
+	}
+
+	c := &ChaCha20{}
+
+	for i := 0; i < 8; i++ {
+		c.key[i] = binary.LittleEndian.Uint32(key[i*4 : (i+1)*4])
+	}
+
+	for i := 0; i < 3; i++ {
+		c.nonce[i] = binary.LittleEndian.Uint32(nonce[i*4 : (i+1)*4])
+	}
+
+	return c, nil
+}
+
+func (c *ChaCha20) quarterRound(a, b, c_idx, d *uint32) {
+	*a += *b
+	*d ^= *a
+	*d = bits.RotateLeft32(*d, 16)
+
+	*c_idx += *d
+	*b ^= *c_idx
+	*b = bits.RotateLeft32(*b, 12)
+
+	*a += *b
+	*d ^= *a
+	*d = bits.RotateLeft32(*d, 8)
+
+	*c_idx += *d
+	*b ^= *c_idx
+	*b = bits.RotateLeft32(*b, 7)
+}
+
+func (c *ChaCha20) block() [64]byte {
+	// ChaCha20 状态
+	state := [16]uint32{
+		0x61707865, 0x3320646e, 0x79622d32, 0x6b206574, // "expand 32-byte k"
+		c.key[0], c.key[1], c.key[2], c.key[3],
+		c.key[4], c.key[5], c.key[6], c.key[7],
+		c.counter, c.nonce[0], c.nonce[1], c.nonce[2],
+	}
+
+	working := state
+
+	// 20轮 (10次双轮)
+	for i := 0; i < 10; i++ {
+		// 列轮
+		c.quarterRound(&working[0], &working[4], &working[8], &working[12])
+		c.quarterRound(&working[1], &working[5], &working[9], &working[13])
+		c.quarterRound(&working[2], &working[6], &working[10], &working[14])
+		c.quarterRound(&working[3], &working[7], &working[11], &working[15])
+
+		// 对角轮
+		c.quarterRound(&working[0], &working[5], &working[10], &working[15])
+		c.quarterRound(&working[1], &working[6], &working[11], &working[12])
+		c.quarterRound(&working[2], &working[7], &working[8], &working[13])
+		c.quarterRound(&working[3], &working[4], &working[9], &working[14])
+	}
+
+	// 加上初始状态
+	for i := range working {
+		working[i] += state[i]
+	}
+
+	// 转换为字节序列
+	var result [64]byte
+	for i, word := range working {
+		binary.LittleEndian.PutUint32(result[i*4:(i+1)*4], word)
+	}
+
+	c.counter++
 	return result
 }
 
-func (aes *AESCipher) addRoundKey(state [][]uint8, round int) {
-	for col := 0; col < 4; col++ {
-		keyWord := aes.roundKeys[round][col]
-		state[0][col] ^= uint8((keyWord >> 24) & 0xff)
-		state[1][col] ^= uint8((keyWord >> 16) & 0xff)
-		state[2][col] ^= uint8((keyWord >> 8) & 0xff)
-		state[3][col] ^= uint8(keyWord & 0xff)
-	}
-}
-
-// --- AES-CTR模式实现 ---
+// --- 流密码实现 ---
 
 type AESCTRStream struct {
-	r            io.Reader
-	w            io.Writer
-	cipher       *AESCipher
-	iv           []byte
-	counter      uint64
-	keystream    []byte
-	keystreamPos int
+	aes       *AES
+	iv        [16]byte
+	counter   uint64
+	keystream []byte
+	pos       int
 }
 
-func NewAESCTRStream(r io.Reader, w io.Writer, key, iv []byte) (*AESCTRStream, error) {
-	if len(key) != AESKeySize || len(iv) != AESBlockSize {
-		return nil, errors.New("invalid key/iv length for AES-256-CTR")
+func NewAESCTRStream(key, iv []byte) (*AESCTRStream, error) {
+	if len(iv) != 16 {
+		return nil, ErrInvalidNonceSize
 	}
 
-	// 为了安全性，不直接修改传入的iv
-	ivCopy := make([]byte, len(iv))
-	copy(ivCopy, iv)
+	aes, err := NewAES(key)
+	if err != nil {
+		return nil, err
+	}
 
-	return &AESCTRStream{
-		r:            r,
-		w:            w,
-		cipher:       NewAESCipher(key),
-		iv:           ivCopy,
-		counter:      0,
-		keystream:    make([]byte, AESBlockSize),
-		keystreamPos: AESBlockSize, // 强制第一次生成keystream
-	}, nil
+	stream := &AESCTRStream{aes: aes}
+	copy(stream.iv[:], iv)
+
+	return stream, nil
+}
+
+func (s *AESCTRStream) XORKeyStream(dst, src []byte) {
+	for len(src) > 0 {
+		if s.pos >= len(s.keystream) {
+			s.generateKeystream()
+		}
+
+		n := len(src)
+		if n > len(s.keystream)-s.pos {
+			n = len(s.keystream) - s.pos
+		}
+
+		for i := 0; i < n; i++ {
+			dst[i] = src[i] ^ s.keystream[s.pos+i]
+		}
+
+		src = src[n:]
+		dst = dst[n:]
+		s.pos += n
+	}
 }
 
 func (s *AESCTRStream) generateKeystream() {
-	counterBlock := make([]byte, AESBlockSize)
-	copy(counterBlock, s.iv)
-
-	// 将64位计数器加到IV的后8个字节上，这是CTR模式的常见实现
-	// 注意：这会修改counterBlock，但不会修改s.iv
-	currentCounterBytes := make([]byte, 8)
-	binary.BigEndian.PutUint64(currentCounterBytes, s.counter)
-
-	// 将计数器与IV的相应部分相加（带进位）
-	var carry uint16
-	for i := 7; i >= 0; i-- {
-		val := uint16(s.iv[8+i]) + uint16(currentCounterBytes[i]) + carry
-		counterBlock[8+i] = byte(val)
-		carry = val >> 8
-	}
-
-	s.keystream = s.cipher.Encrypt(counterBlock)
+	counterBlock := s.iv
+	binary.BigEndian.PutUint64(counterBlock[8:], s.counter)
+	s.keystream = s.aes.Encrypt(counterBlock[:])
 	s.counter++
-	s.keystreamPos = 0
-}
-
-func (s *AESCTRStream) Read(p []byte) (n int, err error) {
-	if s.r == nil {
-		return 0, errors.New("no reader available")
-	}
-
-	// 注意：这里应该是先从底层读取n个字节，然后再解密这n个字节。
-	// 您的原始实现可能会导致读取不足的问题。修正如下：
-	n, err = s.r.Read(p)
-	if n > 0 {
-		for i := 0; i < n; i++ {
-			if s.keystreamPos >= AESBlockSize {
-				s.generateKeystream()
-			}
-			p[i] ^= s.keystream[s.keystreamPos]
-			s.keystreamPos++
-		}
-	}
-	return n, err
-}
-
-func (s *AESCTRStream) Write(p []byte) (n int, err error) {
-	if s.w == nil {
-		return 0, errors.New("no writer available")
-	}
-
-	ciphertext := make([]byte, len(p))
-	for i := 0; i < len(p); i++ {
-		if s.keystreamPos >= AESBlockSize {
-			s.generateKeystream()
-		}
-		ciphertext[i] = p[i] ^ s.keystream[s.keystreamPos]
-		s.keystreamPos++
-	}
-	return s.w.Write(ciphertext)
-}
-
-// --- ChaCha20完整实现 ---
-// (此处省略您已提供的完整ChaCha20实现代码... )
-func quarterRound(a, b, c, d *uint32) {
-	*a += *b
-	*d ^= *a
-	*d = (*d << 16) | (*d >> 16)
-	*c += *d
-	*b ^= *c
-	*b = (*b << 12) | (*b >> 20)
-	*a += *b
-	*d ^= *a
-	*d = (*d << 8) | (*d >> 24)
-	*c += *d
-	*b ^= *c
-	*b = (*b << 7) | (*b >> 25)
-}
-
-func chaChaBlock(out *[16]uint32, in *[16]uint32) {
-	x := *in
-
-	for i := 0; i < 10; i++ {
-		// 列轮
-		quarterRound(&x[0], &x[4], &x[8], &x[12])
-		quarterRound(&x[1], &x[5], &x[9], &x[13])
-		quarterRound(&x[2], &x[6], &x[10], &x[14])
-		quarterRound(&x[3], &x[7], &x[11], &x[15])
-		// 对角轮
-		quarterRound(&x[0], &x[5], &x[10], &x[15])
-		quarterRound(&x[1], &x[6], &x[11], &x[12])
-		quarterRound(&x[2], &x[7], &x[8], &x[13])
-		quarterRound(&x[3], &x[4], &x[9], &x[14])
-	}
-
-	for i := 0; i < 16; i++ {
-		out[i] = x[i] + in[i]
-	}
+	s.pos = 0
 }
 
 type ChaCha20Stream struct {
-	r            io.Reader
-	w            io.Writer
-	key          [8]uint32
-	nonce        [3]uint32
-	counter      uint32
-	keystream    []byte
-	keystreamPos int
+	chacha    *ChaCha20
+	keystream []byte
+	pos       int
 }
 
-func NewChaCha20Stream(r io.Reader, w io.Writer, key, nonce []byte) (*ChaCha20Stream, error) {
-	if len(key) != ChaChaKeySize || len(nonce) != ChaNonceSize {
-		return nil, errors.New("invalid key/nonce length for ChaCha20")
+func NewChaCha20Stream(key, nonce []byte) (*ChaCha20Stream, error) {
+	chacha, err := NewChaCha20(key, nonce)
+	if err != nil {
+		return nil, err
 	}
 
-	s := &ChaCha20Stream{
-		r:            r,
-		w:            w,
-		keystream:    make([]byte, ChaChaBlockSize),
-		keystreamPos: ChaChaBlockSize, // 强制第一次生成
-	}
+	return &ChaCha20Stream{chacha: chacha}, nil
+}
 
-	// 设置密钥
-	for i := 0; i < 8; i++ {
-		s.key[i] = binary.LittleEndian.Uint32(key[i*4 : i*4+4])
-	}
+func (s *ChaCha20Stream) XORKeyStream(dst, src []byte) {
+	for len(src) > 0 {
+		if s.pos >= len(s.keystream) {
+			s.generateKeystream()
+		}
 
-	// 设置nonce
-	for i := 0; i < 3; i++ {
-		s.nonce[i] = binary.LittleEndian.Uint32(nonce[i*4 : i*4+4])
-	}
+		n := len(src)
+		if n > len(s.keystream)-s.pos {
+			n = len(s.keystream) - s.pos
+		}
 
-	return s, nil
+		for i := 0; i < n; i++ {
+			dst[i] = src[i] ^ s.keystream[s.pos+i]
+		}
+
+		src = src[n:]
+		dst = dst[n:]
+		s.pos += n
+	}
 }
 
 func (s *ChaCha20Stream) generateKeystream() {
-	var state, out [16]uint32
-
-	// ChaCha20常量 "expand 32-byte k"
-	state[0] = 0x61707865
-	state[1] = 0x3320646e
-	state[2] = 0x79622d32
-	state[3] = 0x6b206574
-
-	// 密钥
-	copy(state[4:12], s.key[:])
-
-	// 计数器和nonce
-	state[12] = s.counter
-	copy(state[13:16], s.nonce[:])
-
-	chaChaBlock(&out, &state)
-
-	// 转换为字节
-	for i := 0; i < 16; i++ {
-		binary.LittleEndian.PutUint32(s.keystream[i*4:i*4+4], out[i])
-	}
-
-	s.counter++
-	s.keystreamPos = 0
+	block := s.chacha.block()
+	s.keystream = block[:]
+	s.pos = 0
 }
 
-func (s *ChaCha20Stream) Read(p []byte) (n int, err error) {
-	if s.r == nil {
-		return 0, errors.New("no reader available")
-	}
+// --- 后量子密码学支持 ---
+//
+// TODO
+//
 
-	// 修正同AESCTRStream.Read
-	n, err = s.r.Read(p)
+// --- 流读写器实现 ---
+
+type streamWriter struct {
+	w      io.Writer
+	stream interface{ XORKeyStream(dst, src []byte) }
+	buf    []byte
+}
+
+func (sw *streamWriter) Write(p []byte) (n int, err error) {
+	encrypted := make([]byte, len(p))
+	sw.stream.XORKeyStream(encrypted, p)
+	return sw.w.Write(encrypted)
+}
+
+func (sw *streamWriter) Close() error {
+	if c, ok := sw.w.(io.Closer); ok {
+		return c.Close()
+	}
+	return nil
+}
+
+type streamReader struct {
+	r      io.Reader
+	stream interface{ XORKeyStream(dst, src []byte) }
+}
+
+func (sr *streamReader) Read(p []byte) (n int, err error) {
+	n, err = sr.r.Read(p)
 	if n > 0 {
-		for i := 0; i < n; i++ {
-			if s.keystreamPos >= ChaChaBlockSize {
-				s.generateKeystream()
-			}
-			p[i] ^= s.keystream[s.keystreamPos]
-			s.keystreamPos++
-		}
+		decrypted := make([]byte, n)
+		sr.stream.XORKeyStream(decrypted, p[:n])
+		copy(p[:n], decrypted)
 	}
 	return n, err
 }
 
-func (s *ChaCha20Stream) Write(p []byte) (n int, err error) {
-	if s.w == nil {
-		return 0, errors.New("no writer available")
-	}
-
-	ciphertext := make([]byte, len(p))
-	for i := 0; i < len(p); i++ {
-		if s.keystreamPos >= ChaChaBlockSize {
-			s.generateKeystream()
-		}
-		ciphertext[i] = p[i] ^ s.keystream[s.keystreamPos]
-		s.keystreamPos++
-	}
-	return s.w.Write(ciphertext)
-}
-
-// --- 后量子密码学(PQC)实现 ---
-
-// Kyber KEM包装器
-type KyberKEM struct {
-	publicKey  kyber768.PublicKey
-	privateKey kyber768.PrivateKey
-}
-
-func GenerateKyberKeyPair() (*KyberKEM, error) {
-	pub, priv, err := kyber768.GenerateKeyPair(rand.Reader)
-	if err != nil {
-		return nil, err
-	}
-
-	return &KyberKEM{
-		publicKey:  *pub,
-		privateKey: *priv,
-	}, nil
-}
-
-func (k *KyberKEM) Encapsulate() (ciphertext, sharedSecret []byte, err error) {
-	// 接收方公钥加密
-	return kyber768.Scheme().Encapsulate(&k.publicKey)
-}
-
-func (k *KyberKEM) Decapsulate(ciphertext []byte) (sharedSecret []byte, err error) {
-	// 接收方私钥解密
-	return kyber768.Scheme().Decapsulate(&k.privateKey, ciphertext)
-}
-
-// Dilithium签名包装器
-type DilithiumSigner struct {
-	publicKey  mode3.PublicKey
-	privateKey mode3.PrivateKey
-}
-
-func GenerateDilithiumKeyPair() (*DilithiumSigner, error) {
-	pub, priv, err := mode3.GenerateKey(rand.Reader)
-	if err != nil {
-		return nil, err
-	}
-
-	return &DilithiumSigner{
-		publicKey:  *pub,
-		privateKey: *priv,
-	}, nil
-}
-
-func (d *DilithiumSigner) Sign(message []byte) error {
-	sigbytes := []byte("blingcc")
-	mode3.SignTo(&d.privateKey, message, sigbytes)
-	// 使用私钥签名
-	return nil
-}
-
-func (d *DilithiumSigner) Verify(message, signature []byte) bool {
-	// 使用公钥验签
-	return mode3.Verify(&d.publicKey, message, signature)
-}
-
-// --- 混合模式加密(经典+后量子) ---
-
-type HybridEncryption struct {
-	kyberKEM *KyberKEM
-}
-
-func NewHybridEncryption() (*HybridEncryption, error) {
-	kyberKEM, err := GenerateKyberKeyPair()
-	if err != nil {
-		return nil, err
-	}
-
-	return &HybridEncryption{
-		kyberKEM: kyberKEM,
-	}, nil
-}
-
-// --- 密钥派生函数 ---
-func deriveKey(password string, salt []byte) []byte {
-	return pbkdf2.Key([]byte(password), salt, 4096, 32, sha256.New)
-}
-
 // --- 加密写入器 ---
-type encryptedWriter struct {
-	underlyingWriter io.Writer
-	streamCipher     io.Writer
-	// io.Closer for future use if needed (e.g., for file handles)
-}
-
-// NewEncryptedWriterForHybrid is a helper for testing hybrid mode.
-// It returns the writer and the private key needed for decryption.
-func NewEncryptedWriterForHybrid(w io.Writer, algorithm uint8) (io.WriteCloser, *kyber768.PrivateKey, error) {
-	if algorithm != AlgoHybrid {
-		return nil, nil, fmt.Errorf("this function is only for hybrid mode")
-	}
-
-	hybrid, err := NewHybridEncryption()
-	if err != nil {
-		return nil, nil, err
-	}
-
-	ciphertext, sharedSecret, err := hybrid.kyberKEM.Encapsulate()
-	if err != nil {
-		return nil, nil, err
-	}
-
-	aesIV := make([]byte, AESBlockSize)
-	if _, err := rand.Read(aesIV); err != nil {
-		return nil, nil, err
-	}
-
-	nonce := append(ciphertext, aesIV...)
-
-	aesStream, err := NewAESCTRStream(nil, w, sharedSecret, aesIV)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	header := new(bytes.Buffer)
-	header.Write(magicHeader)
-	header.WriteByte(version)
-	header.WriteByte(algorithm)
-	// Hybrid mode doesn't use password-derived salt, so salt length is 0
-	header.WriteByte(0)
-	header.WriteByte(byte(len(nonce)))
-	header.Write(nonce)
-
-	if _, err := w.Write(header.Bytes()); err != nil {
-		return nil, nil, err
-	}
-
-	writer := &encryptedWriter{
-		underlyingWriter: w,
-		streamCipher:     aesStream,
-	}
-	return writer, &hybrid.kyberKEM.privateKey, nil
-}
 
 func NewEncryptedWriter(w io.Writer, password string, algorithm uint8) (io.WriteCloser, error) {
-	if algorithm != AlgoHybrid && password == "" {
+	if password == "" {
 		return nil, errors.New("password cannot be empty for encryption")
-	}
-
-	// AlgoHybrid has a different key management scheme (KEM) and doesn't use a password.
-	if algorithm == AlgoHybrid {
-		// NOTE: In a real application, you would use the recipient's public key here.
-		// For this example, we generate a new key pair and discard the private key.
-		// Decryption would require a different function that takes the private key.
-		// See NewEncryptedWriterForHybrid for a testable implementation.
-		return nil, fmt.Errorf("hybrid encryption requires recipient's public key; use test helper function instead")
 	}
 
 	salt := make([]byte, 16)
@@ -619,30 +675,31 @@ func NewEncryptedWriter(w io.Writer, password string, algorithm uint8) (io.Write
 	key := deriveKey(password, salt)
 
 	var nonce []byte
-	var stream io.Writer
+	var stream interface{ XORKeyStream(dst, src []byte) }
 
 	switch algorithm {
 	case AlgoAES256_CTR:
-		nonce = make([]byte, AESBlockSize)
+		nonce = make([]byte, 16)
 		if _, err := rand.Read(nonce); err != nil {
 			return nil, err
 		}
-		aesStream, err := NewAESCTRStream(nil, w, key, nonce)
+		aesStream, err := NewAESCTRStream(key, nonce)
 		if err != nil {
 			return nil, err
 		}
 		stream = aesStream
 
 	case AlgoChaCha20:
-		nonce = make([]byte, ChaNonceSize)
+		nonce = make([]byte, 12)
 		if _, err := rand.Read(nonce); err != nil {
 			return nil, err
 		}
-		chachaStream, err := NewChaCha20Stream(nil, w, key, nonce)
+		chachaStream, err := NewChaCha20Stream(key, nonce)
 		if err != nil {
 			return nil, err
 		}
 		stream = chachaStream
+
 	default:
 		return nil, fmt.Errorf("unsupported algorithm: %d", algorithm)
 	}
@@ -651,7 +708,7 @@ func NewEncryptedWriter(w io.Writer, password string, algorithm uint8) (io.Write
 	header := new(bytes.Buffer)
 	header.Write(magicHeader)
 	header.WriteByte(version)
-	header.WriteByte(algorithm)
+	header.WriteByte(byte(algorithm))
 	header.WriteByte(byte(len(salt)))
 	header.Write(salt)
 	header.WriteByte(byte(len(nonce)))
@@ -661,95 +718,23 @@ func NewEncryptedWriter(w io.Writer, password string, algorithm uint8) (io.Write
 		return nil, err
 	}
 
-	return &encryptedWriter{
-		underlyingWriter: w,
-		streamCipher:     stream,
-	}, nil
-}
-
-func (ew *encryptedWriter) Write(p []byte) (n int, err error) {
-	return ew.streamCipher.Write(p)
-}
-
-func (ew *encryptedWriter) Close() error {
-	// In this implementation, the underlying writer is managed by the caller.
-	// If this struct were to own a file handle, this is where it would be closed.
-	return nil
+	return &streamWriter{w: w, stream: stream}, nil
 }
 
 // --- 解密读取器 ---
 
-type decryptedReader struct {
-	streamCipher io.Reader
-}
-
-func (dr *decryptedReader) Read(p []byte) (n int, err error) {
-	return dr.streamCipher.Read(p)
-}
-
-// NewDecryptedReaderForHybrid is a helper for testing hybrid mode.
-// It requires the private key that corresponds to the public key used for encryption.
-func NewDecryptedReaderForHybrid(r io.Reader, privKey *kyber768.PrivateKey) (io.Reader, error) {
-	// Header validation (similar to NewDecryptedReader)
-	header := make([]byte, len(magicHeader))
-	if _, err := io.ReadFull(r, header); err != nil {
-		return nil, err
-	}
-	if !bytes.Equal(header, magicHeader) {
-		return nil, ErrInvalidMagic
-	}
-	meta := make([]byte, 2) // version, algo
-	if _, err := io.ReadFull(r, meta); err != nil {
-		return nil, err
-	}
-	if meta[1] != AlgoHybrid {
-		return nil, fmt.Errorf("expected hybrid algorithm, got %d", meta[1])
-	}
-
-	// Read salt (length is 0 for hybrid)
-	saltLenBuf := make([]byte, 1)
-	if _, err := io.ReadFull(r, saltLenBuf); err != nil {
-		return nil, err
-	}
-
-	// Read nonce (which is KyberCT + AES_IV)
-	nonceLenBuf := make([]byte, 1)
-	if _, err := io.ReadFull(r, nonceLenBuf); err != nil {
-		return nil, err
-	}
-	nonce := make([]byte, nonceLenBuf[0])
-	if _, err := io.ReadFull(r, nonce); err != nil {
-		return nil, err
-	}
-
-	// Decapsulate to get the shared secret
-	kyberCT := nonce[:kyber768.CiphertextSize]
-	aesIV := nonce[kyber768.CiphertextSize:]
-
-	sharedSecret, err := kyber768.Scheme().Decapsulate(privKey, kyberCT)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decapsulate kyber ciphertext: %w", err)
-	}
-
-	aesStream, err := NewAESCTRStream(r, nil, sharedSecret, aesIV)
-	if err != nil {
-		return nil, err
-	}
-
-	return &decryptedReader{streamCipher: aesStream}, nil
-}
-
 func NewDecryptedReader(r io.Reader, password string) (io.Reader, error) {
-	// 读取魔数
 	header := make([]byte, len(magicHeader))
 	if _, err := io.ReadFull(r, header); err != nil {
-		if err == io.EOF || err == io.ErrUnexpectedEOF {
-			return nil, ErrInvalidMagic
-		}
 		return nil, err
 	}
+
 	if !bytes.Equal(header, magicHeader) {
 		return nil, ErrInvalidMagic
+	}
+
+	if password == "" {
+		return nil, ErrPasswordRequired
 	}
 
 	// 读取版本和算法
@@ -760,55 +745,172 @@ func NewDecryptedReader(r io.Reader, password string) (io.Reader, error) {
 	// versionByte := meta[0]
 	algoByte := meta[1]
 
-	// 混合模式有不同的处理流程，因为它不使用密码
-	if algoByte == AlgoHybrid {
-		return nil, fmt.Errorf("hybrid encrypted files require the recipient's private key for decryption, use NewDecryptedReaderForHybrid helper")
-	}
-
-	if password == "" {
-		return nil, ErrPasswordRequired
-	}
-
-	// 读取Salt
-	saltLenBuf := make([]byte, 1)
-	if _, err := io.ReadFull(r, saltLenBuf); err != nil {
+	// 读取 Salt
+	saltLen := make([]byte, 1)
+	if _, err := io.ReadFull(r, saltLen); err != nil {
 		return nil, err
 	}
-	salt := make([]byte, saltLenBuf[0])
+	salt := make([]byte, saltLen[0])
 	if _, err := io.ReadFull(r, salt); err != nil {
 		return nil, err
 	}
 
-	// 读取Nonce/IV
-	nonceLenBuf := make([]byte, 1)
-	if _, err := io.ReadFull(r, nonceLenBuf); err != nil {
+	// 读取 Nonce/IV
+	nonceLen := make([]byte, 1)
+	if _, err := io.ReadFull(r, nonceLen); err != nil {
 		return nil, err
 	}
-	nonce := make([]byte, nonceLenBuf[0])
+	nonce := make([]byte, nonceLen[0])
 	if _, err := io.ReadFull(r, nonce); err != nil {
 		return nil, err
 	}
 
-	// 派生密钥
 	key := deriveKey(password, salt)
 
-	var stream io.Reader
-	var err error
-
+	var stream interface{ XORKeyStream(dst, src []byte) }
 	switch algoByte {
 	case AlgoAES256_CTR:
-		stream, err = NewAESCTRStream(r, nil, key, nonce)
+		aesStream, err := NewAESCTRStream(key, nonce)
 		if err != nil {
 			return nil, err
 		}
+		stream = aesStream
 	case AlgoChaCha20:
-		stream, err = NewChaCha20Stream(r, nil, key, nonce)
+		chachaStream, err := NewChaCha20Stream(key, nonce)
 		if err != nil {
 			return nil, err
 		}
+		stream = chachaStream
 	default:
-		return nil, fmt.Errorf("unsupported or invalid algorithm: %d", algoByte)
+		return nil, fmt.Errorf("unsupported algorithm: %d", algoByte)
 	}
 
-	return &decryptedReader{streamCipher: stream}, nil
+	return &streamReader{r: r, stream: stream}, nil
+}
+
+// --- 实用工具函数 ---
+
+// 检查文件是否为加密文件
+func IsEncryptedFile(r io.Reader) (bool, uint8, error) {
+	header := make([]byte, len(magicHeader))
+	n, err := r.Read(header)
+	if err != nil || n < len(magicHeader) {
+		return false, 0, nil
+	}
+
+	if !bytes.Equal(header, magicHeader) {
+		return false, 0, nil
+	}
+
+	meta := make([]byte, 2)
+	if _, err := r.Read(meta); err != nil {
+		return false, 0, err
+	}
+
+	return true, meta[1], nil // 返回算法类型
+}
+
+// 安全清零内存
+func SecureZero(data []byte) {
+	for i := range data {
+		data[i] = 0
+	}
+}
+
+// 比较两个字节切片是否相等（防止时序攻击）
+func ConstantTimeCompare(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+
+	var result byte
+	for i := 0; i < len(a); i++ {
+		result |= a[i] ^ b[i]
+	}
+
+	return result == 0
+}
+
+// 生成加密强度的随机字节
+func GenerateSecureRandom(size int) ([]byte, error) {
+	data := make([]byte, size)
+	if _, err := rand.Read(data); err != nil {
+		return nil, fmt.Errorf("failed to generate random data: %w", err)
+	}
+	return data, nil
+}
+
+// 密码强度检查
+func CheckPasswordStrength(password string) (score int, suggestions []string) {
+	score = 0
+	suggestions = []string{}
+
+	if len(password) >= 12 {
+		score += 2
+	} else if len(password) >= 8 {
+		score += 1
+	} else {
+		suggestions = append(suggestions, "使用至少8个字符，推荐12个以上")
+	}
+
+	hasLower, hasUpper, hasDigit, hasSpecial := false, false, false, false
+	for _, r := range password {
+		switch {
+		case r >= 'a' && r <= 'z':
+			hasLower = true
+		case r >= 'A' && r <= 'Z':
+			hasUpper = true
+		case r >= '0' && r <= '9':
+			hasDigit = true
+		default:
+			hasSpecial = true
+		}
+	}
+
+	complexity := 0
+	if hasLower {
+		complexity++
+	} else {
+		suggestions = append(suggestions, "包含小写字母")
+	}
+	if hasUpper {
+		complexity++
+	} else {
+		suggestions = append(suggestions, "包含大写字母")
+	}
+	if hasDigit {
+		complexity++
+	} else {
+		suggestions = append(suggestions, "包含数字")
+	}
+	if hasSpecial {
+		complexity++
+	} else {
+		suggestions = append(suggestions, "包含特殊字符")
+	}
+
+	score += complexity
+
+	// 检查常见弱密码模式
+	weak_patterns := []string{"123456", "password", "qwerty", "admin", "root"}
+	for _, pattern := range weak_patterns {
+		if bytes.Contains([]byte(password), []byte(pattern)) {
+			score -= 2
+			suggestions = append(suggestions, "避免使用常见的弱密码模式")
+			break
+		}
+	}
+
+	if score < 0 {
+		score = 0
+	}
+	if score > 6 {
+		score = 6
+	}
+
+	return score, suggestions
+}
+
+func rotateRight32(x uint32, n int) uint32 {
+	return bits.RotateLeft32(x, -n)
 }
