@@ -33,7 +33,7 @@ func NewArchiveWriter(w io.Writer) *ArchiveWriter {
 }
 
 // WriteEntry 将一个文件或目录写入归档
-func (aw *ArchiveWriter) WriteEntry(meta FileMetadata, data io.Reader) error {
+func (aw *ArchiveWriter) WriteEntry(meta FileMetadata, data io.Reader, buffer []byte) error {
 	// 序列化元数据头部
 	headerBytes, err := json.Marshal(meta)
 	if err != nil {
@@ -59,8 +59,13 @@ func (aw *ArchiveWriter) WriteEntry(meta FileMetadata, data io.Reader) error {
 
 	// 写入文件数据
 	if data != nil && meta.Size > 0 {
-		if _, err := io.CopyN(aw.w, data, meta.Size); err != nil {
+		limitedReader := io.LimitReader(data, meta.Size)
+		n, err := io.CopyBuffer(aw.w, limitedReader, buffer)
+		if err != nil {
 			return fmt.Errorf("failed to write file data: %w", err)
+		}
+		if n != meta.Size {
+			return fmt.Errorf("file size mismatch for %s: expected %d, wrote %d", meta.Path, meta.Size, n)
 		}
 	}
 
@@ -78,26 +83,34 @@ func NewArchiveReader(r io.Reader) *ArchiveReader {
 
 // NextEntry 读取下一个文件条目。如果到文件末尾，返回 io.EOF
 func (ar *ArchiveReader) NextEntry() (*FileMetadata, error) {
+	// 读取头部长度
 	var headerLen uint32
 	if err := binary.Read(ar.r, binary.BigEndian, &headerLen); err != nil {
 		return nil, err // 如果是 EOF，则正常结束
 	}
 
+	// 读取头部 JSON
 	headerBytes := make([]byte, headerLen)
 	if _, err := io.ReadFull(ar.r, headerBytes); err != nil {
 		return nil, fmt.Errorf("failed to read header json: %w", err)
 	}
 
+	// Unmarshal 元数据
 	var meta FileMetadata
 	if err := json.Unmarshal(headerBytes, &meta); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal header: %w", err)
 	}
 
+	// 读取数据长度
 	var dataLen uint64
 	if err := binary.Read(ar.r, binary.BigEndian, &dataLen); err != nil {
 		return nil, fmt.Errorf("failed to read data length: %w", err)
 	}
-	meta.Size = int64(dataLen) // 确保 meta 中的 Size 是正确的
+
+	// 验证元数据中的大小与流中记录的大小是否一致
+	if meta.Size != int64(dataLen) {
+		return nil, fmt.Errorf("metadata size (%d) does not match data stream size (%d) for %s", meta.Size, dataLen, meta.Path)
+	}
 
 	return &meta, nil
 }
