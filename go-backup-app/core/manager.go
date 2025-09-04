@@ -274,7 +274,7 @@ func (m *BackupManager) runRestore(archiveReader *ArchiveReader, restoreDir stri
 					}
 				}
 			case meta.Mode.IsRegular():
-				// 对于常规文件，我们需要流式处理
+				// 对于常规文件，需要流式处理
 				// 创建一个管道，将读取端交给 worker
 				pr, pw := io.Pipe()
 

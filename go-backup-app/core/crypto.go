@@ -3,12 +3,15 @@ package core
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"math/bits"
+	"runtime"
+	"sync"
 )
 
 // --- CC的 SHA-256 实现 ---
@@ -520,6 +523,12 @@ func (c *ChaCha20) block() [64]byte {
 
 // --- 流密码实现 ---
 
+type CipherStream interface {
+	XORKeyStream(dst, src []byte)
+	// SetCounter 允许将密码流的状态重置到处理特定块的位置
+	SetCounter(counter uint64)
+}
+
 type AESCTRStream struct {
 	aes       *AES
 	iv        [16]byte
@@ -544,17 +553,23 @@ func NewAESCTRStream(key, iv []byte) (*AESCTRStream, error) {
 	return stream, nil
 }
 
+func (s *AESCTRStream) SetCounter(counter uint64) {
+	s.counter = counter
+	s.pos = 16 // Force regeneration of keystream
+}
+
 func (s *AESCTRStream) XORKeyStream(dst, src []byte) {
 	for len(src) > 0 {
 		if s.pos >= len(s.keystream) {
 			s.generateKeystream()
 		}
 
-		n := len(src)
-		if n > len(s.keystream)-s.pos {
-			n = len(s.keystream) - s.pos
+		n := len(s.keystream) - s.pos
+		if n > len(src) {
+			n = len(src)
 		}
 
+		// XOR a portion of the keystream
 		for i := 0; i < n; i++ {
 			dst[i] = src[i] ^ s.keystream[s.pos+i]
 		}
@@ -588,6 +603,11 @@ func NewChaCha20Stream(key, nonce []byte) (*ChaCha20Stream, error) {
 	return &ChaCha20Stream{chacha: chacha}, nil
 }
 
+func (s *ChaCha20Stream) SetCounter(counter uint64) {
+	s.chacha.counter = uint32(counter) // ChaCha20 counter is u32
+	s.pos = 64                         // Force regeneration
+}
+
 func (s *ChaCha20Stream) XORKeyStream(dst, src []byte) {
 	for len(src) > 0 {
 		if s.pos >= len(s.keystream) {
@@ -619,6 +639,377 @@ func (s *ChaCha20Stream) generateKeystream() {
 //
 // TODO
 //
+
+// --- 并行流读写器实现 (完全重写和修复) ---
+
+const (
+	chunkSize = 1 * 1024 * 1024
+)
+
+var (
+	workerCount = runtime.NumCPU()
+)
+
+type job struct {
+	id   int
+	data []byte
+}
+
+type result struct {
+	id   int
+	data []byte
+}
+
+// parallelStreamWriter 是一个并发安全的 io.WriteCloser，用于并行加密数据。
+type parallelStreamWriter struct {
+	w             io.Writer
+	newStreamFn   func() (CipherStream, error)
+	blockPerChunk uint64
+
+	jobs    chan job
+	results chan result
+
+	wg           sync.WaitGroup // 用于等待 workers
+	aggregatorWg sync.WaitGroup // 用于等待 aggregator
+
+	buffer []byte
+	nextID int
+
+	ctx       context.Context
+	cancel    context.CancelFunc
+	closeOnce sync.Once
+	writeErr  error
+	errLock   sync.Mutex
+}
+
+func newParallelStreamWriter(w io.Writer, algorithm uint8, key, nonce []byte) (*parallelStreamWriter, error) {
+	var newStreamFn func() (CipherStream, error)
+	var streamBlockSize int
+
+	switch algorithm {
+	case AlgoAES256_CTR:
+		newStreamFn = func() (CipherStream, error) { return NewAESCTRStream(key, nonce) }
+		streamBlockSize = 16
+	case AlgoChaCha20:
+		newStreamFn = func() (CipherStream, error) { return NewChaCha20Stream(key, nonce) }
+		streamBlockSize = 64
+	default:
+		return nil, fmt.Errorf("unsupported algorithm: %d", algorithm)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	sw := &parallelStreamWriter{
+		w:             w,
+		newStreamFn:   newStreamFn,
+		blockPerChunk: uint64(chunkSize / streamBlockSize),
+		jobs:          make(chan job, workerCount),
+		results:       make(chan result, workerCount),
+		buffer:        make([]byte, 0, chunkSize),
+		ctx:           ctx,
+		cancel:        cancel,
+	}
+
+	sw.start()
+	return sw, nil
+}
+
+func (sw *parallelStreamWriter) start() {
+	// 启动 workers
+	sw.wg.Add(workerCount)
+	for i := 0; i < workerCount; i++ {
+		go sw.worker()
+	}
+
+	// 启动 aggregator
+	sw.aggregatorWg.Add(1)
+	go sw.aggregator()
+}
+
+func (sw *parallelStreamWriter) worker() {
+	defer sw.wg.Done()
+	stream, err := sw.newStreamFn()
+	if err != nil {
+		sw.setErr(fmt.Errorf("worker failed to create stream: %w", err))
+		return
+	}
+
+	for {
+		select {
+		case <-sw.ctx.Done():
+			return
+		case j, ok := <-sw.jobs:
+			if !ok {
+				return // jobs channel closed, normal exit
+			}
+
+			counter := uint64(j.id) * sw.blockPerChunk
+			stream.SetCounter(counter)
+
+			encrypted := make([]byte, len(j.data))
+			stream.XORKeyStream(encrypted, j.data)
+
+			select {
+			case sw.results <- result{id: j.id, data: encrypted}:
+			case <-sw.ctx.Done():
+				return // Abort sending if context is cancelled
+			}
+		}
+	}
+}
+
+func (sw *parallelStreamWriter) aggregator() {
+	defer sw.aggregatorWg.Done()
+
+	resultsBuffer := make(map[int][]byte)
+	nextWriteID := 0
+
+	for {
+		select {
+		case <-sw.ctx.Done():
+			return // Exit if context is cancelled
+		case res, ok := <-sw.results:
+			if !ok {
+				return // results channel closed, normal exit
+			}
+
+			resultsBuffer[res.id] = res.data
+
+			// 循环写入所有已按顺序到达的块
+			for {
+				data, exists := resultsBuffer[nextWriteID]
+				if !exists {
+					break // 下一个块还没到
+				}
+
+				if _, err := sw.w.Write(data); err != nil {
+					sw.setErr(fmt.Errorf("aggregator failed to write chunk %d: %w", nextWriteID, err))
+					return // 发生写入错误，停止聚合
+				}
+
+				delete(resultsBuffer, nextWriteID)
+				nextWriteID++
+			}
+		}
+	}
+}
+
+func (sw *parallelStreamWriter) Write(p []byte) (n int, err error) {
+	if err := sw.getErr(); err != nil {
+		return 0, err
+	}
+
+	sw.buffer = append(sw.buffer, p...)
+
+	for len(sw.buffer) >= chunkSize {
+		chunk := make([]byte, chunkSize)
+		copy(chunk, sw.buffer[:chunkSize])
+
+		select {
+		case sw.jobs <- job{id: sw.nextID, data: chunk}:
+			sw.nextID++
+			sw.buffer = sw.buffer[chunkSize:]
+		case <-sw.ctx.Done():
+			return 0, sw.getErr() // Return error if pipeline has been cancelled
+		}
+	}
+
+	return len(p), nil
+}
+
+func (sw *parallelStreamWriter) Close() error {
+	sw.closeOnce.Do(func() {
+		// 发送剩余的 buffer 数据
+		if len(sw.buffer) > 0 && sw.getErr() == nil {
+			sw.jobs <- job{id: sw.nextID, data: sw.buffer}
+			sw.buffer = nil
+		}
+
+		// 关闭 jobs channel，通知 workers 不再有新任务
+		close(sw.jobs)
+
+		// 等待所有 workers 完成
+		sw.wg.Wait()
+
+		// 关闭 results channel，通知 aggregator 不再有新结果
+		close(sw.results)
+
+		// 等待 aggregator 完成
+		sw.aggregatorWg.Wait()
+
+		// 停止所有协程，以防万一
+		sw.cancel()
+
+		// 关闭底层的 writer (如果需要)
+		if c, ok := sw.w.(io.Closer); ok {
+			if err := c.Close(); err != nil {
+				sw.setErr(err)
+			}
+		}
+	})
+
+	return sw.getErr()
+}
+
+func (sw *parallelStreamWriter) setErr(err error) {
+	sw.errLock.Lock()
+	if sw.writeErr == nil {
+		sw.writeErr = err
+		sw.cancel() // 发生错误时，取消 context
+	}
+	sw.errLock.Unlock()
+}
+
+func (sw *parallelStreamWriter) getErr() error {
+	sw.errLock.Lock()
+	defer sw.errLock.Unlock()
+	return sw.writeErr
+}
+
+// newParallelStreamReaderWithPipe 使用 io.Pipe 创建一个并行的解密 io.Reader
+func newParallelStreamReaderWithPipe(r io.Reader, algorithm uint8, key, nonce []byte) (io.Reader, error) {
+	pr, pw := io.Pipe()
+
+	var newStreamFn func() (CipherStream, error)
+	var streamBlockSize int
+
+	switch algorithm {
+	case AlgoAES256_CTR:
+		newStreamFn = func() (CipherStream, error) { return NewAESCTRStream(key, nonce) }
+		streamBlockSize = 16
+	case AlgoChaCha20:
+		newStreamFn = func() (CipherStream, error) { return NewChaCha20Stream(key, nonce) }
+		streamBlockSize = 64
+	default:
+		return nil, fmt.Errorf("unsupported algorithm: %d", algorithm)
+	}
+
+	blockPerChunk := uint64(chunkSize / streamBlockSize)
+
+	go func() {
+		// 在流水线结束时，将错误传递给 reader
+		var pipelineErr error
+		defer func() {
+			if pipelineErr != nil {
+				pw.CloseWithError(pipelineErr)
+			} else {
+				pw.Close()
+			}
+		}()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		jobs := make(chan job, workerCount)
+		results := make(chan result, workerCount)
+		var wg sync.WaitGroup
+
+		// 启动 workers
+		wg.Add(workerCount)
+		for i := 0; i < workerCount; i++ {
+			go func() {
+				defer wg.Done()
+				stream, err := newStreamFn()
+				if err != nil {
+					pipelineErr = fmt.Errorf("worker stream init failed: %w", err)
+					cancel()
+					return
+				}
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case j, ok := <-jobs:
+						if !ok {
+							return
+						}
+
+						counter := uint64(j.id) * blockPerChunk
+						stream.SetCounter(counter)
+						decrypted := make([]byte, len(j.data))
+						stream.XORKeyStream(decrypted, j.data)
+
+						select {
+						case results <- result{id: j.id, data: decrypted}:
+						case <-ctx.Done():
+							return
+						}
+					}
+				}
+			}()
+		}
+
+		// 启动 producer (读取加密文件并分发任务)
+		producerWg := sync.WaitGroup{}
+		producerWg.Add(1)
+		go func() {
+			defer producerWg.Done()
+			defer close(jobs)
+			nextID := 0
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+
+				buf := make([]byte, chunkSize)
+				n, err := io.ReadFull(r, buf)
+				if n > 0 {
+					jobs <- job{id: nextID, data: buf[:n]}
+					nextID++
+				}
+				if err != nil {
+					if err != io.EOF && err != io.ErrUnexpectedEOF {
+						pipelineErr = err
+						cancel()
+					}
+					return
+				}
+			}
+		}()
+
+		// 启动一个协程等待所有任务完成并关闭 results channel
+		go func() {
+			producerWg.Wait()
+			wg.Wait()
+			close(results)
+		}()
+
+		// Aggregator (重组解密后的数据并写入 pipe)
+		resultsBuffer := make(map[int][]byte)
+		nextWriteID := 0
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case res, ok := <-results:
+				if !ok {
+					return
+				} // 正常结束
+
+				resultsBuffer[res.id] = res.data
+				for {
+					data, exists := resultsBuffer[nextWriteID]
+					if !exists {
+						break
+					}
+
+					if _, err := pw.Write(data); err != nil {
+						// Pipe 的 reader 端已关闭，说明消费者不再需要数据，
+						cancel()
+						return
+					}
+					delete(resultsBuffer, nextWriteID)
+					nextWriteID++
+				}
+			}
+		}
+	}()
+
+	return pr, nil
+}
 
 // --- 流读写器实现 ---
 
@@ -669,35 +1060,23 @@ func NewEncryptedWriter(w io.Writer, password string, algorithm uint8) (io.Write
 	}
 
 	key := deriveKey(password, salt)
+	defer SecureZero(key) // Securely clear key from memory when done
 
 	var nonce []byte
-	var stream interface{ XORKeyStream(dst, src []byte) }
+	var nonceSize int
 
 	switch algorithm {
 	case AlgoAES256_CTR:
-		nonce = make([]byte, 16)
-		if _, err := rand.Read(nonce); err != nil {
-			return nil, err
-		}
-		aesStream, err := NewAESCTRStream(key, nonce)
-		if err != nil {
-			return nil, err
-		}
-		stream = aesStream
-
+		nonceSize = 16
 	case AlgoChaCha20:
-		nonce = make([]byte, 12)
-		if _, err := rand.Read(nonce); err != nil {
-			return nil, err
-		}
-		chachaStream, err := NewChaCha20Stream(key, nonce)
-		if err != nil {
-			return nil, err
-		}
-		stream = chachaStream
-
+		nonceSize = 12
 	default:
 		return nil, fmt.Errorf("unsupported algorithm: %d", algorithm)
+	}
+
+	nonce = make([]byte, nonceSize)
+	if _, err := rand.Read(nonce); err != nil {
+		return nil, err
 	}
 
 	// 写入文件头
@@ -714,7 +1093,7 @@ func NewEncryptedWriter(w io.Writer, password string, algorithm uint8) (io.Write
 		return nil, err
 	}
 
-	return &streamWriter{w: w, stream: stream}, nil
+	return newParallelStreamWriter(w, algorithm, key, nonce)
 }
 
 // --- 解密读取器 ---
@@ -722,6 +1101,9 @@ func NewEncryptedWriter(w io.Writer, password string, algorithm uint8) (io.Write
 func NewDecryptedReader(r io.Reader, password string) (io.Reader, error) {
 	header := make([]byte, len(magicHeader))
 	if _, err := io.ReadFull(r, header); err != nil {
+		if err == io.EOF {
+			return nil, ErrInvalidMagic // File too short
+		}
 		return nil, err
 	}
 
@@ -738,50 +1120,32 @@ func NewDecryptedReader(r io.Reader, password string) (io.Reader, error) {
 	if _, err := io.ReadFull(r, meta); err != nil {
 		return nil, err
 	}
-	// versionByte := meta[0]
 	algoByte := meta[1]
 
 	// 读取 Salt
-	saltLen := make([]byte, 1)
-	if _, err := io.ReadFull(r, saltLen); err != nil {
+	saltLenBytes := make([]byte, 1)
+	if _, err := io.ReadFull(r, saltLenBytes); err != nil {
 		return nil, err
 	}
-	salt := make([]byte, saltLen[0])
+	salt := make([]byte, saltLenBytes[0])
 	if _, err := io.ReadFull(r, salt); err != nil {
 		return nil, err
 	}
 
 	// 读取 Nonce/IV
-	nonceLen := make([]byte, 1)
-	if _, err := io.ReadFull(r, nonceLen); err != nil {
+	nonceLenBytes := make([]byte, 1)
+	if _, err := io.ReadFull(r, nonceLenBytes); err != nil {
 		return nil, err
 	}
-	nonce := make([]byte, nonceLen[0])
+	nonce := make([]byte, nonceLenBytes[0])
 	if _, err := io.ReadFull(r, nonce); err != nil {
 		return nil, err
 	}
 
 	key := deriveKey(password, salt)
+	defer SecureZero(key)
 
-	var stream interface{ XORKeyStream(dst, src []byte) }
-	switch algoByte {
-	case AlgoAES256_CTR:
-		aesStream, err := NewAESCTRStream(key, nonce)
-		if err != nil {
-			return nil, err
-		}
-		stream = aesStream
-	case AlgoChaCha20:
-		chachaStream, err := NewChaCha20Stream(key, nonce)
-		if err != nil {
-			return nil, err
-		}
-		stream = chachaStream
-	default:
-		return nil, fmt.Errorf("unsupported algorithm: %d", algoByte)
-	}
-
-	return &streamReader{r: r, stream: stream}, nil
+	return newParallelStreamReaderWithPipe(r, algoByte, key, nonce)
 }
 
 // --- 实用工具函数 ---

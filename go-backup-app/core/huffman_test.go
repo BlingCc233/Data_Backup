@@ -380,7 +380,7 @@ func FuzzHuffman(f *testing.F) {
 		// 解压
 		reader, err := NewCompressedReader(mockWc)
 		// 如果原始数据为空，压缩后也为空，NewCompressedReader 会因找不到魔术字而报错
-		// 这是预期行为，所以我们只在有压缩数据时继续
+		// 只在有压缩数据时继续
 		if err != nil {
 			if mockWc.Len() > 0 {
 				t.Fatalf("NewCompressedReader failed with non-empty buffer: %v", err)

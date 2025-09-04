@@ -91,7 +91,7 @@ func (fc *FilterConfig) ShouldInclude(path string, info os.FileInfo) bool {
 		if !pathIncluded {
 			// TODO
 
-			// 如果是目录，我们不能立即排除它，因为它的子文件可能匹配
+			// 如果是目录，不能立即排除它，因为它的子文件可能匹配
 			// 如果是文件，并且路径不匹配，则排除
 			if !info.IsDir() {
 				return false

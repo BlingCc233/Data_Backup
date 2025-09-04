@@ -292,7 +292,7 @@ async function doRestore(password) {
   } catch (error) {
     if (typeof error === 'string' && error.includes("password_required")) {
       statusMessage.value = "This backup is encrypted. Please provide the password.";
-      // --- 修改点：不再使用 prompt，而是显示我们的模态框 ---
+      // --- 修改点：不再使用 prompt，而是显示模态框 ---
       isPasswordModalVisible.value = true;
       // 使用 nextTick 确保 DOM 更新后再聚焦
       await nextTick();
