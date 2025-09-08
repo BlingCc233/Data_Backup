@@ -160,7 +160,7 @@ func (m *BackupManager) Backup(srcDir, destFile string, filters FilterConfig, us
 	return nil
 }
 
-// Restore 执行恢复 (并行优化)
+// Restore 执行恢复
 func (m *BackupManager) Restore(backupFile, restoreDir string, password string) error {
 	inFile, err := os.Open(backupFile)
 	if err != nil {
@@ -199,7 +199,8 @@ func (m *BackupManager) Restore(backupFile, restoreDir string, password string) 
 	}
 	if err == nil && bytes.Equal(magic, huffmanMagic) {
 		log.Println("Compressed data detected, proceeding with decompression.")
-		// 创建解压读取器，它会消耗掉魔术字
+		// NewCompressedReader 内部并行
+		// 它会消耗掉魔术字
 		compressedReader, err := NewCompressedReader(reader)
 		if err != nil {
 			return fmt.Errorf("failed to create decompressor: %w", err)
@@ -210,7 +211,7 @@ func (m *BackupManager) Restore(backupFile, restoreDir string, password string) 
 		return m.runRestore(archiveReader, restoreDir)
 	}
 
-	// 4. 如果没有压缩，直接处理归档
+	// 如果没有压缩，直接处理归档
 	log.Println("Not a compressed stream, proceeding without decompression.")
 	archiveReader := NewArchiveReader(reader)
 	return m.runRestore(archiveReader, restoreDir)

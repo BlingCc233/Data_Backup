@@ -3,10 +3,12 @@ package core
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
+	"runtime"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -458,6 +460,25 @@ func deserializeFreqTable(r io.Reader) (map[byte]int64, error) {
 }
 
 func NewCompressedReader(r io.Reader) (io.Reader, error) {
+	return NewParallelCompressedReader(r)
+}
+
+// --- 并行解压缩 ---
+
+var huffmanDecompressionWorkers = runtime.NumCPU()
+
+type decompressJob struct {
+	id   int
+	data []byte
+}
+
+type decompressResult struct {
+	id   int
+	data []byte
+	err  error
+}
+
+func NewParallelCompressedReader(r io.Reader) (io.Reader, error) {
 	magic := make([]byte, len(huffmanMagic))
 	if _, err := io.ReadFull(r, magic); err != nil {
 		if err == io.EOF || err == io.ErrUnexpectedEOF {
@@ -468,7 +489,190 @@ func NewCompressedReader(r io.Reader) (io.Reader, error) {
 	if !bytes.Equal(magic, huffmanMagic) {
 		return nil, ErrNotCompressed
 	}
-	return &huffmanReader{r: r, buffer: &bytes.Buffer{}}, nil
+
+	pr, pw := io.Pipe()
+
+	go func() {
+		var pipelineErr error
+		defer func() {
+			if pipelineErr != nil {
+				pw.CloseWithError(pipelineErr)
+			} else {
+				pw.Close()
+			}
+		}()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		jobs := make(chan decompressJob, huffmanDecompressionWorkers)
+		results := make(chan decompressResult, huffmanDecompressionWorkers)
+		var wg sync.WaitGroup
+
+		// 启动 workers
+		wg.Add(huffmanDecompressionWorkers)
+		for i := 0; i < huffmanDecompressionWorkers; i++ {
+			go func() {
+				defer wg.Done()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case j, ok := <-jobs:
+						if !ok {
+							return
+						}
+						decompressed, err := decompressChunk(j.data)
+						select {
+						case results <- decompressResult{id: j.id, data: decompressed, err: err}:
+						case <-ctx.Done():
+							return
+						}
+					}
+				}
+			}()
+		}
+
+		// 启动 producer
+		producerWg := sync.WaitGroup{}
+		producerWg.Add(1)
+		go func() {
+			defer producerWg.Done()
+			defer close(jobs)
+			nextID := 0
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+
+				chunkHeader := make([]byte, len(chunkMagic)+4) // magic + len
+				if _, err := io.ReadFull(r, chunkHeader); err != nil {
+					if err != io.EOF && err != io.ErrUnexpectedEOF {
+						pipelineErr = err
+						cancel()
+					}
+					return // 正常结束或错误
+				}
+
+				if !bytes.Equal(chunkHeader[:len(chunkMagic)], chunkMagic) {
+					pipelineErr = fmt.Errorf("invalid huffman chunk magic")
+					cancel()
+					return
+				}
+
+				chunkLen := binary.BigEndian.Uint32(chunkHeader[len(chunkMagic):])
+				chunkData := make([]byte, chunkLen)
+				if _, err := io.ReadFull(r, chunkData); err != nil {
+					pipelineErr = fmt.Errorf("failed to read huffman chunk data: %w", err)
+					cancel()
+					return
+				}
+
+				select {
+				case jobs <- decompressJob{id: nextID, data: chunkData}:
+					nextID++
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+
+		go func() {
+			producerWg.Wait()
+			wg.Wait()
+			close(results)
+		}()
+
+		// Aggregator
+		resultsBuffer := make(map[int][]byte)
+		nextWriteID := 0
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case res, ok := <-results:
+				if !ok {
+					return // 正常结束
+				}
+				if res.err != nil {
+					pipelineErr = res.err
+					cancel()
+					continue
+				}
+
+				resultsBuffer[res.id] = res.data
+				for {
+					data, exists := resultsBuffer[nextWriteID]
+					if !exists {
+						break
+					}
+
+					if _, err := pw.Write(data); err != nil {
+						cancel()
+						return
+					}
+					delete(resultsBuffer, nextWriteID)
+					nextWriteID++
+				}
+			}
+		}
+	}()
+
+	return pr, nil
+}
+
+// decompressChunk 将单个压缩数据块解压为原始数据
+func decompressChunk(chunkData []byte) ([]byte, error) {
+	chunkReader := bytes.NewReader(chunkData)
+
+	var originalLen uint64
+	if err := binary.Read(chunkReader, binary.BigEndian, &originalLen); err != nil {
+		return nil, err
+	}
+	if originalLen == 0 {
+		return []byte{}, nil
+	}
+
+	var headerLen uint32
+	if err := binary.Read(chunkReader, binary.BigEndian, &headerLen); err != nil {
+		return nil, err
+	}
+
+	freqTable, err := deserializeFreqTable(io.LimitReader(chunkReader, int64(headerLen)))
+	if err != nil {
+		return nil, err
+	}
+
+	decodeTree := buildHuffmanTree(freqTable)
+	if decodeTree == nil {
+		return nil, fmt.Errorf("failed to build huffman tree from chunk")
+	}
+
+	bitReader := newBitReader(chunkReader)
+	out := make([]byte, 0, originalLen)
+
+	for i := uint64(0); i < originalLen; i++ {
+		currentNode := decodeTree
+		for currentNode.left != nil || currentNode.right != nil {
+			bit, err := bitReader.ReadBit()
+			if err != nil {
+				return nil, io.ErrUnexpectedEOF
+			}
+			if bit {
+				currentNode = currentNode.right
+			} else {
+				currentNode = currentNode.left
+			}
+			if currentNode == nil {
+				return nil, fmt.Errorf("invalid huffman code in chunk")
+			}
+		}
+		out = append(out, currentNode.char)
+	}
+
+	return out, nil
 }
 
 func (hr *huffmanReader) Read(p []byte) (n int, err error) {

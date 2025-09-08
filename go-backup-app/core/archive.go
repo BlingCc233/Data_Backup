@@ -51,11 +51,7 @@ func (aw *ArchiveWriter) WriteEntry(meta FileMetadata, data io.Reader, buffer []
 		return fmt.Errorf("failed to write header json: %w", err)
 	}
 
-	// 写入数据长度 (8 bytes)
-	dataLen := uint64(meta.Size)
-	if err := binary.Write(aw.w, binary.BigEndian, dataLen); err != nil {
-		return fmt.Errorf("failed to write data length: %w", err)
-	}
+	// meta.Size 存在于 header_json 中，是唯一的数据来源。
 
 	// 写入文件数据
 	if data != nil && meta.Size > 0 {
@@ -86,7 +82,10 @@ func (ar *ArchiveReader) NextEntry() (*FileMetadata, error) {
 	// 读取头部长度
 	var headerLen uint32
 	if err := binary.Read(ar.r, binary.BigEndian, &headerLen); err != nil {
-		return nil, err // 如果是 EOF，则正常结束
+		if err == io.EOF {
+			return nil, io.EOF // 正常结束
+		}
+		return nil, err
 	}
 
 	// 读取头部 JSON
@@ -101,16 +100,8 @@ func (ar *ArchiveReader) NextEntry() (*FileMetadata, error) {
 		return nil, fmt.Errorf("failed to unmarshal header: %w", err)
 	}
 
-	// 读取数据长度
-	var dataLen uint64
-	if err := binary.Read(ar.r, binary.BigEndian, &dataLen); err != nil {
-		return nil, fmt.Errorf("failed to read data length: %w", err)
-	}
-
-	// 验证元数据中的大小与流中记录的大小是否一致
-	if meta.Size != int64(dataLen) {
-		return nil, fmt.Errorf("metadata size (%d) does not match data stream size (%d) for %s", meta.Size, dataLen, meta.Path)
-	}
+	// Reader 读取元数据块，并将流的位置留在数据块的开头
+	// 供调用者根据 meta.Size 读取
 
 	return &meta, nil
 }
