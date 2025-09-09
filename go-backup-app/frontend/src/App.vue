@@ -2,8 +2,8 @@
   <div id="app-container">
     <!-- Main View: Home Screen -->
     <main class="main-content" v-if="currentScreen === 'home'">
-      <div class="home-screen">
-        <h1 class="home-title">GoBackup</h1>
+      <div class="home-screen" >
+        <h1 class="home-title">CcBackup</h1>
         <div class="home-actions">
           <div class="action-card" @click="navigateTo('backup')">
             <div class="icon">⚡</div>
@@ -240,7 +240,8 @@
     </main>
 
     <!-- Global Log Section (only shown for backup) -->
-    <div class="log-card-container" v-if="currentScreen === 'backup'">
+<!--    <div class="log-card-container" v-if="currentScreen === 'backup'">-->
+    <div class="log-card-container">
       <div class="log-card">
         <h3>日志输出</h3>
         <p class="status">{{ statusMessage }}</p>
@@ -294,6 +295,21 @@
       </div>
     </div>
 
+    <!-- Conflict Modal -->
+    <div v-if="isConflictModalVisible" class="modal-overlay">
+      <div class="modal-content">
+        <h3>文件冲突</h3>
+        <p>目标位置已存在文件：</p>
+        <p><strong>{{ conflictInfo.path }}</strong></p>
+        <p>您希望如何处理？</p>
+        <div class="modal-actions">
+          <button @click="resolveConflict('skip')">跳过</button>
+          <button @click="resolveConflict('keep_both')">保留两者</button>
+          <button class="primary" @click="resolveConflict('overwrite')">覆盖</button>
+        </div>
+      </div>
+    </div>
+
   </div>
 
 </template>
@@ -302,7 +318,7 @@
 import {ref, onMounted, reactive, computed, nextTick} from 'vue';
 import {
   SelectFiles, SelectDirectory, GetFileMetadata, StartBackup, StopOperation,
-  GetBackupHistory, StartRestore, OpenInExplorer
+  GetBackupHistory, StartRestore, OpenInExplorer, ResolveConflict
 } from '../wailsjs/go/main/App';
 import { EventsOn } from '../wailsjs/runtime/runtime';
 
@@ -448,8 +464,13 @@ function calculateLogProgress(elapsedTime) {
 function updateProgress() {
   if (!inProgress.value || progressStartTime.value === 0) return;
 
-  const elapsed = Date.now() - progressStartTime.value;
-  progress.value = calculateLogProgress(elapsed);
+
+  if(isConflictModalVisible.value){
+    progress.value = progress.value;
+  }else {
+    const elapsed = Date.now() - progressStartTime.value;
+    progress.value = calculateLogProgress(elapsed);
+  }
 
   // 特殊处理加密情况下的进度提示切换
   if (currentScreen.value === 'backup' && encryption.enabled) {
@@ -593,7 +614,9 @@ const selectRestoreDir = async () => {
   if (dir) restoreDir.value = dir;
 };
 
+
 async function doRestore(password) {
+  // ... 此函数内部逻辑保持不变
   let cleanPassword = (typeof password === 'string') ? password : '';
   if (!restoreFile.value || !restoreDir.value) {
     statusMessage.value = "请选择备份文件和恢复目录。";
@@ -707,6 +730,12 @@ onMounted(() => {
   EventsOn("progress_update", (p) => {
     statusMessage.value = p.message;
   });
+  EventsOn("conflict_detected", (data) => {
+    // data 包含 { path: "...", requestID: "..." }
+    conflictInfo.path = data.path;
+    conflictInfo.requestID = data.requestID;
+    isConflictModalVisible.value = true;
+  });
 
   fetchBackupHistory();
 });
@@ -729,6 +758,35 @@ function closeSuccessModal() {
   showErrorModal.value = false;
   successMessage.value = '';
 }
+
+// --- 冲突模态框状态 ---
+const isConflictModalVisible = ref(false);
+const conflictInfo = reactive({
+  path: '',
+  requestID: '',
+});
+
+
+// --- 冲突解决逻辑 ---
+async function resolveConflict(resolution) {
+  if (!conflictInfo.requestID) return;
+
+  try {
+    await ResolveConflict(conflictInfo.requestID, resolution);
+    // 成功发送后，关闭模态框并重置状态
+    isConflictModalVisible.value = false;
+    conflictInfo.path = '';
+    conflictInfo.requestID = '';
+  } catch (error) {
+    // 处理错误，例如显示一个错误消息
+    statusMessage.value = `解决冲突失败: ${error}`;
+    showErrorModal.value = true;
+    successMessage.value = `解决冲突失败: ${error}`;
+    // 也许也应该关闭模态框
+    isConflictModalVisible.value = false;
+  }
+}
+
 </script>
 
 <style>
@@ -803,7 +861,7 @@ body, html {
 .home-screen {
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  justify-content: space-evenly;
   align-items: center;
   height: 100%;
   text-align: center;
@@ -1114,6 +1172,8 @@ button:disabled {
 
 /* Log Section (at the bottom) */
 .log-card-container {
+  display: none;
+  /* TODO */
   flex-shrink: 0;
   padding: 0 2rem 2rem 2rem;
 }

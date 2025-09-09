@@ -17,9 +17,11 @@ func main() {
 
 	// 创建 Wails 应用
 	err := wails.Run(&options.App{
-		Title:  "GoBackupApp",
-		Width:  1024,
-		Height: 768,
+		Title:     "CcBackup",
+		Width:     1024,
+		Height:    700,
+		MinWidth:  800,
+		MinHeight: 700,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},

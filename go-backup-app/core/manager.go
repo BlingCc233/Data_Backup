@@ -26,7 +26,7 @@ const (
 )
 
 // ConflictHandler is a function type that resolves file conflicts.
-type ConflictHandler func(path string) ConflictAction
+type ConflictHandler func(path string) (ConflictAction, error)
 
 type BackupManager struct {
 	ctx             context.Context
@@ -471,10 +471,15 @@ func (m *BackupManager) writeFileFromPipe(meta *FileMetadata, destPath string, p
 	// Conflict Resolution
 	if _, err := os.Lstat(destPath); err == nil {
 		if m.ConflictHandler != nil {
-			action := m.ConflictHandler(destPath)
+			action, err := m.ConflictHandler(destPath)
+			if err != nil {
+				return err
+			}
 			switch action {
 			case ActionSkip:
 				m.emitLog(fmt.Sprintf("Skipping existing file: %s", destPath))
+				// BUG FIX: 必须消费掉管道中的数据，否则写入端会阻塞然后报错"write on closed pipe"
+				_, _ = io.Copy(io.Discard, pr)
 				return nil
 			case ActionKeepBoth:
 				// Find a new name, e.g., file.txt -> file (1).txt
@@ -508,7 +513,10 @@ func (m *BackupManager) writeFileFromPipe(meta *FileMetadata, destPath string, p
 
 	_, err = io.CopyBuffer(outFile, pr, buffer)
 	if err != nil {
-		return fmt.Errorf("failed to write data to %s: %w", destPath, err)
+		// 检查错误是否是由于管道关闭引起的，这通常是正常情况，因为生产者完成了写入。
+		if !errors.Is(err, io.ErrClosedPipe) {
+			return fmt.Errorf("failed to write data to %s: %w", destPath, err)
+		}
 	}
 
 	if err := outFile.Chmod(meta.Mode.Perm()); err != nil {

@@ -10,6 +10,8 @@ export function GetFileMetadata(arg1:Array<string>):Promise<Array<main.FileInfo>
 
 export function OpenInExplorer(arg1:string):Promise<void>;
 
+export function ResolveConflict(arg1:string,arg2:string):Promise<void>;
+
 export function SelectDirectory():Promise<string>;
 
 export function SelectFiles(arg1:boolean):Promise<Array<string>>;

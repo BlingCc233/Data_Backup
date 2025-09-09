@@ -10,7 +10,9 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -20,10 +22,16 @@ type App struct {
 	ctx    context.Context
 	db     *sql.DB
 	cancel context.CancelFunc // 打断备份/恢复操作
+
+	conflictRequests map[string]*conflictRequest
+	conflictMutex    sync.Mutex
+	requestIDCounter int64
 }
 
 func NewApp() *App {
-	return &App{}
+	return &App{
+		conflictRequests: make(map[string]*conflictRequest),
+	}
 }
 
 func (a *App) startup(ctx context.Context) {
@@ -187,35 +195,74 @@ type RestoreConfig struct {
 	Password   string `json:"password"`
 }
 
+// ResolveConflict is called by the frontend to resolve a file conflict.
+func (a *App) ResolveConflict(requestID string, resolution string) error {
+	a.conflictMutex.Lock()
+	defer a.conflictMutex.Unlock()
+
+	req, ok := a.conflictRequests[requestID]
+	if !ok {
+		return fmt.Errorf("no pending conflict request with ID: %s", requestID)
+	}
+
+	var action core.ConflictAction
+	switch resolution {
+	case "overwrite":
+		action = core.ActionOverwrite
+	case "keep_both":
+		action = core.ActionKeepBoth
+	case "skip":
+		action = core.ActionSkip
+	default:
+		return fmt.Errorf("invalid resolution: %s", resolution)
+	}
+
+	req.responseChan <- action
+	delete(a.conflictRequests, requestID)
+	return nil
+}
+
 func (a *App) StartRestore(config RestoreConfig) (string, error) {
 	opCtx, cancel := context.WithCancel(a.ctx)
 	a.cancel = cancel
-	defer func() { a.cancel = nil }()
+	defer func() {
+		a.cancel = nil
+		// 清理任何悬而未决的冲突请求
+		a.conflictMutex.Lock()
+		for id, req := range a.conflictRequests {
+			close(req.responseChan)
+			delete(a.conflictRequests, id)
+		}
+		a.conflictMutex.Unlock()
+	}()
 
 	log.Printf("Starting restore of %s to %s", config.BackupFile, config.RestoreDir)
 	manager := core.NewBackupManager(opCtx)
 
-	manager.ConflictHandler = func(path string) core.ConflictAction {
-		res, err := runtime.MessageDialog(opCtx, runtime.MessageDialogOptions{
-			Type:    runtime.QuestionDialog,
-			Title:   "文件冲突",
-			Message: fmt.Sprintf("文件已存在: %s\n您希望如何处理？", path),
-			Buttons: []string{"覆盖", "跳过", "保留两者"},
-		})
-		if err != nil {
-			return core.ActionSkip
+	manager.ConflictHandler = func(path string) (core.ConflictAction, error) {
+		a.conflictMutex.Lock()
+		a.requestIDCounter++
+		requestID := strconv.FormatInt(a.requestIDCounter, 10)
+		req := &conflictRequest{
+			responseChan: make(chan core.ConflictAction, 1),
 		}
-		switch res {
-		case "覆盖":
-			return core.ActionOverwrite
-		case "保留两者":
-			return core.ActionKeepBoth
-		default:
-			return core.ActionSkip
+		a.conflictRequests[requestID] = req
+		a.conflictMutex.Unlock()
+
+		runtime.EventsEmit(a.ctx, "conflict_detected", map[string]string{
+			"path":      path,
+			"requestID": requestID,
+		})
+
+		// 等待前端的响应或操作被取消
+		select {
+		case <-opCtx.Done():
+			return core.ActionSkip, opCtx.Err() // 如果操作被取消，默认跳过并返回错误
+		case action := <-req.responseChan:
+			return action, nil
 		}
 	}
 
-	// The `filesToRestore` parameter is removed, indicating a full restore.
 	err := manager.Restore(config.BackupFile, config.RestoreDir, config.Password)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
@@ -303,4 +350,8 @@ func (a *App) GetBackupHistory() ([]BackupRecord, error) {
 	}
 
 	return validRecords, nil
+}
+
+type conflictRequest struct {
+	responseChan chan core.ConflictAction
 }
