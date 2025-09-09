@@ -129,3 +129,39 @@
 ## 📄 许可证
 
 本项目基于 `GPL-3.0 License` 开源。
+
+## 更新日志
+
+**v1.1.1**
+- [X] 基本功能实现
+- [X] 加解密测试
+- [X] 压缩解压测试
+
+**v1.1.2**
+- [X] Huffman压缩并行化提升大文件（夹）备份速度
+- [X] 并行化压缩测试（~~解压依旧串行、huffman算法限制~~）
+- [X] 大文件(夹)并行分块读取、内存优化
+
+**v1.1.3**
+- [X] 加解密并行优化
+- [X] 多文件并行io，单文件并行加解密
+
+**v1.1.4**
+- [X] 修复bug：单个有加密backup后restore：Error: failed to read next archive entry (archive may be corrupt): failed to read header json: unexpected EOF
+- [X] 修复bug：有加密的情况下restore往内存读一整个qbak
+
+**v1.1.5**
+- [X] GUI重构：交互逻辑、显示逻辑
+- [X] 新增多源file筛选
+
+**v1.1.6**
+- [X] 修复GUI显示BUG
+- [X] 恢复逻辑重构
+- [X] 恢复回退并行化、抛弃预览功能
+- [X] 数据库自动追新
+
+**v1.1.7**
+- [X] 修复加解密时密码无效的bug
+- [X] 进度条流程优化
+- [X] 恢复时无法取消的bug
+- [X] 文件冲突解决
