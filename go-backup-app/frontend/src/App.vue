@@ -85,6 +85,7 @@
               您已手动选择了 {{ selectedBackupFileCount }} 个项目。在这里，您可以应用更高级的规则来进一步过滤这些项目。
               例如，在选中的文件夹中排除所有 `.tmp` 文件。
             </p>
+            <strong style="color: #f6ad55;">如果不需要筛选，请直接点击下一步。</strong>
             <div class="filter-grid">
               <div class="filter-group">
                 <label>包含名称 (e.g. `*.log`, `data*`)</label>
@@ -278,6 +279,17 @@
         <p>{{ successMessage }}</p>
         <div class="modal-actions">
           <button class="primary" @click="closeSuccessModal">确定</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Error Modal -->
+    <div v-if="showErrorModal" class="modal-overlay">
+      <div class="modal-content error-modal">
+        <h3>操作失败</h3>
+        <p>错误信息：{{ successMessage }}</p>
+        <div class="modal-actions">
+          <button class="primary" @click="closeErrModal">确定</button>
         </div>
       </div>
     </div>
@@ -536,6 +548,8 @@ async function doBackup() {
       showSuccessModal.value = true;
     }
   } catch (error) {
+    successMessage.value = `${error}`;
+    showErrorModal.value = true;
     statusMessage.value = `错误: ${error}`;
   } finally {
     inProgress.value = false;
@@ -623,6 +637,13 @@ async function doRestore(password) {
       passwordInputRef.value?.focus();
     } else {
       statusMessage.value = `错误: ${error}`;
+      showErrorModal.value = true;
+      if(cleanPassword !== '' && error.includes("EOF")){
+        successMessage.value = `密码错误请重试`;
+      }
+      else {
+        successMessage.value = `${error}`;
+      }
     }
   } finally {
     if (!isPasswordModalVisible.value) {
@@ -633,7 +654,8 @@ async function doRestore(password) {
 
 function submitPasswordAndRetryRestore() {
   if (!restorePasswordInput.value) {
-    alert("密码不能为空。");
+    successMessage.value = `密码不能为空`;
+    showErrorModal.value = true;
     return;
   }
   isPasswordModalVisible.value = false;
@@ -655,6 +677,9 @@ function stopOperation() {
   inProgress.value = false;
   statusMessage.value = "操作已停止。";
   progressStartTime.value = 0;
+  progress.value = 0; // 重置进度条
+  progressStage.value = ''; // 清除阶段状态
+
   if (currentScreen.value === 'backup') {
     backupStep.value = Math.max(1, backupStep.value - 1);
   }
@@ -690,6 +715,7 @@ onMounted(() => {
 // 添加成功弹窗状态
 const showSuccessModal = ref(false);
 const successMessage = ref('');
+const showErrorModal = ref(false);
 
 // 添加关闭成功弹窗并返回首页的函数
 function closeSuccessModal() {
@@ -697,6 +723,11 @@ function closeSuccessModal() {
   currentScreen.value = 'home';
   resetBackupState();
   resetRestoreState();
+}
+
+ function closeErrModal() {
+  showErrorModal.value = false;
+  successMessage.value = '';
 }
 </script>
 
@@ -786,10 +817,11 @@ body, html {
 
 .home-actions {
   display: flex;
-  gap: 2rem;
+  gap: 3rem;
 }
 
 .action-card {
+  min-width: 10rem;
   background-color: var(--card-bg);
   padding: 2rem 3rem;
   border-radius: 12px;
@@ -1168,6 +1200,7 @@ button:disabled {
   grid-template-columns: 1fr 1fr;
   gap: 1.5rem;
   display: grid;
+  margin-top: 1.5rem;
 }
 
 .filter-group label {
@@ -1245,6 +1278,22 @@ input[type="checkbox"].toggle:checked::before {
 }
 
 .success-modal p {
+  font-size: 1.2rem;
+  margin-bottom: 2rem;
+}
+
+/* Error Modal Styles */
+.error-modal {
+  text-align: center;
+}
+
+.error-modal h3 {
+  color: #bb4870; /* Green color for success */
+  font-size: 1.8rem;
+  margin-bottom: 1rem;
+}
+
+.error-modal p {
   font-size: 1.2rem;
   margin-bottom: 2rem;
 }

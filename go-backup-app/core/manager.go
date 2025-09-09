@@ -7,15 +7,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"io"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
-
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // ConflictAction defines the action to take when a file conflict occurs during restore.
@@ -108,7 +106,6 @@ func (m *BackupManager) Backup(srcPaths []string, destFile string, filters Filte
 	pathsChan := make(chan string)
 	errChan := make(chan error, backupWorkers)
 	var wg sync.WaitGroup
-	var processedFiles int32 = 0
 
 	for i := 0; i < backupWorkers; i++ {
 		wg.Add(1)
@@ -121,10 +118,6 @@ func (m *BackupManager) Backup(srcPaths []string, destFile string, filters Filte
 					return
 				default:
 				}
-
-				// 更新进度
-				current := atomic.AddInt32(&processedFiles, 1)
-				m.emitProgress("正在备份文件...", int(current), totalFiles)
 
 				// Determine base directory for relative path calculation
 				var baseDir string
@@ -251,50 +244,54 @@ func (m *BackupManager) Backup(srcPaths []string, destFile string, filters Filte
 }
 
 func (m *BackupManager) getReaderPipe(backupFile string, password string) (io.ReadCloser, error) {
-
 	inFile, err := os.Open(backupFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open backup file: %w", err)
 	}
 
-	var currentReader io.Reader = bufio.NewReaderSize(inFile, copyBufferSize)
+	var reader io.Reader = inFile
+	var fileCloser io.Closer = inFile
 
-	magic, _ := currentReader.(*bufio.Reader).Peek(len(magicHeader))
-	if bytes.Equal(magic, magicHeader) {
+	bufReader := bufio.NewReaderSize(reader, copyBufferSize)
+
+	magic, err := bufReader.Peek(len(magicHeader))
+	if err == nil && bytes.Equal(magic, magicHeader) {
 		log.Println("Encrypted file detected.")
 		if password == "" {
-			inFile.Close()
+			fileCloser.Close()
 			return nil, ErrPasswordRequired
 		}
-		decryptedReader, err := NewDecryptedReader(currentReader, password)
+
+		decryptedReader, err := NewDecryptedReader(bufReader, password)
 		if err != nil {
-			inFile.Close()
-			return nil, err
+			fileCloser.Close()
+			return nil, fmt.Errorf("failed to create decrypted reader: %w", err)
 		}
-		currentReader = decryptedReader
+		reader = decryptedReader
+	} else {
+		reader = bufReader
 	}
 
-	bufferedFinalReader := bufio.NewReaderSize(currentReader, copyBufferSize)
-	magic, err = bufferedFinalReader.Peek(len(huffmanMagic))
+	bufReaderForCompression := bufio.NewReaderSize(reader, copyBufferSize)
+	magic, err = bufReaderForCompression.Peek(len(huffmanMagic))
 	if err == nil && bytes.Equal(magic, huffmanMagic) {
 		log.Println("Compressed data detected.")
-		compressedReader, err := NewCompressedReader(bufferedFinalReader)
+		compressedReader, err := NewCompressedReader(bufReaderForCompression)
 		if err != nil {
-			inFile.Close()
+			fileCloser.Close()
 			return nil, fmt.Errorf("failed to create decompressor: %w", err)
 		}
-		currentReader = compressedReader
+		reader = compressedReader
 	} else {
-		currentReader = bufferedFinalReader
+		reader = bufReaderForCompression
 	}
 
-	// Wrap the final reader and the original file closer together.
 	return struct {
 		io.Reader
 		io.Closer
 	}{
-		Reader: currentReader,
-		Closer: inFile,
+		Reader: reader,
+		Closer: fileCloser,
 	}, nil
 }
 
@@ -319,14 +316,21 @@ func (m *BackupManager) runRestore(archiveReader *ArchiveReader, restoreDir stri
 	jobsChan := make(chan func(), restoreWorkers)
 	errChan := make(chan error, 1)
 	var wg sync.WaitGroup
-	processedEntries := 0
 
 	for i := 0; i < restoreWorkers; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for task := range jobsChan {
-				task()
+			for {
+				select {
+				case <-m.ctx.Done():
+					return
+				case task, ok := <-jobsChan:
+					if !ok {
+						return
+					}
+					task()
+				}
 			}
 		}()
 	}
@@ -350,17 +354,28 @@ func (m *BackupManager) runRestore(archiveReader *ArchiveReader, restoreDir stri
 				return fmt.Errorf("failed to read next archive entry: %w", err)
 			}
 
-			// 更新进度
-			processedEntries++
-			m.emitProgress("正在恢复文件...", processedEntries, 0) // 0表示未知总数
+			select {
+			case <-m.ctx.Done():
+				return m.ctx.Err()
+			default:
+			}
 
-			// No more selective restore, always process the entry
-			m.emitLog(fmt.Sprintf("正在提取: %s", meta.Path))
 			destPath := filepath.Join(restoreDir, meta.Path)
 
 			switch {
 			case meta.IsLink, meta.IsDir:
+				select {
+				case <-m.ctx.Done():
+					return m.ctx.Err()
+				default:
+				}
 				jobsChan <- func() {
+					select {
+					case <-m.ctx.Done():
+						return
+					default:
+					}
+
 					err := m.createDirOrLink(meta, destPath)
 					if err != nil {
 						select {
@@ -370,9 +385,22 @@ func (m *BackupManager) runRestore(archiveReader *ArchiveReader, restoreDir stri
 					}
 				}
 			case meta.Mode.IsRegular():
+				select {
+				case <-m.ctx.Done():
+					return m.ctx.Err()
+				default:
+				}
+
 				pr, pw := io.Pipe()
 
 				jobsChan <- func() {
+					select {
+					case <-m.ctx.Done():
+						pr.CloseWithError(m.ctx.Err())
+						return
+					default:
+					}
+
 					err := m.writeFileFromPipe(meta, destPath, pr, buffer)
 					if err != nil {
 						pr.CloseWithError(err)
@@ -400,11 +428,17 @@ func (m *BackupManager) runRestore(archiveReader *ArchiveReader, restoreDir stri
 	if producerErr != nil {
 		return producerErr
 	}
+
+	select {
+	case <-m.ctx.Done():
+		return m.ctx.Err()
+	default:
+	}
+
 	if err := <-errChan; err != nil {
 		return err
 	}
 
-	m.emitProgress("恢复完成", processedEntries, processedEntries)
 	return nil
 }
 

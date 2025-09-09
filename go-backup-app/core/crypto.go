@@ -1093,7 +1093,10 @@ func NewEncryptedWriter(w io.Writer, password string, algorithm uint8) (io.Write
 		return nil, err
 	}
 
-	return newParallelStreamWriter(w, algorithm, key, nonce)
+	keyCopy := make([]byte, len(key))
+	copy(keyCopy, key)
+
+	return newParallelStreamWriter(w, algorithm, keyCopy, nonce)
 }
 
 // --- 解密读取器 ---
@@ -1145,7 +1148,10 @@ func NewDecryptedReader(r io.Reader, password string) (io.Reader, error) {
 	key := deriveKey(password, salt)
 	defer SecureZero(key)
 
-	return newParallelStreamReaderWithPipe(r, algoByte, key, nonce)
+	keyCopy := make([]byte, len(key))
+	copy(keyCopy, key)
+
+	return newParallelStreamReaderWithPipe(r, algoByte, keyCopy, nonce)
 }
 
 // --- 实用工具函数 ---
