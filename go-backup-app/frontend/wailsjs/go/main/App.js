@@ -14,10 +14,6 @@ export function GetFileMetadata(arg1) {
   return window['go']['main']['App']['GetFileMetadata'](arg1);
 }
 
-export function ListBackupContents(arg1, arg2) {
-  return window['go']['main']['App']['ListBackupContents'](arg1, arg2);
-}
-
 export function OpenInExplorer(arg1) {
   return window['go']['main']['App']['OpenInExplorer'](arg1);
 }

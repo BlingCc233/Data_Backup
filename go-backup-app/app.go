@@ -19,7 +19,7 @@ import (
 type App struct {
 	ctx    context.Context
 	db     *sql.DB
-	cancel context.CancelFunc // Used to stop ongoing operations
+	cancel context.CancelFunc // 打断备份/恢复操作
 }
 
 func NewApp() *App {
@@ -43,10 +43,8 @@ func (a *App) shutdown(ctx context.Context) {
 
 // --- Dialogs ---
 
-// SelectFiles is a new generic function for file/dir selection
 func (a *App) SelectFiles(selectDirectories bool) ([]string, error) {
 	if selectDirectories {
-		// Wails doesn't have a multi-directory picker, so we use OpenDirectoryDialog and return a slice
 		dir, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
 			Title: "Select Directory",
 		})
@@ -54,11 +52,10 @@ func (a *App) SelectFiles(selectDirectories bool) ([]string, error) {
 			return nil, err
 		}
 		if dir == "" {
-			return []string{}, nil // User cancelled
+			return []string{}, nil
 		}
 		return []string{dir}, nil
 	}
-
 	return runtime.OpenMultipleFilesDialog(a.ctx, runtime.OpenDialogOptions{
 		Title: "Select Files",
 	})
@@ -74,7 +71,7 @@ func (a *App) OpenInExplorer(path string) {
 	runtime.BrowserOpenURL(a.ctx, "file://"+path)
 }
 
-// --- New Feature Functions ---
+// --- Feature Functions ---
 
 type FileInfo struct {
 	Path    string    `json:"path"`
@@ -88,10 +85,10 @@ type FileInfo struct {
 func (a *App) GetFileMetadata(paths []string) ([]FileInfo, error) {
 	var results []FileInfo
 	for _, path := range paths {
-		info, err := os.Lstat(path) // Use Lstat for symlinks
+		info, err := os.Lstat(path)
 		if err != nil {
 			log.Printf("Could not stat path %s: %v", path, err)
-			continue // Skip files we can't access
+			continue
 		}
 		results = append(results, FileInfo{
 			Path:    path,
@@ -174,22 +171,20 @@ func (a *App) StartBackup(config BackupConfig) (string, error) {
 		return "", fmt.Errorf("Backup failed: %w", err)
 	}
 
-	// Add to history on success
 	if err := a.AddBackupRecord(fileName, destinationFile); err != nil {
 		log.Printf("Failed to save backup record to database: %v", err)
 	}
 
 	log.Println("Backup completed successfully.")
-	return "Backup completed successfully!", nil
+	return "备份成功！", nil
 }
 
 // --- Restore ---
 
 type RestoreConfig struct {
-	BackupFile     string   `json:"backupFile"`
-	RestoreDir     string   `json:"restoreDir"`
-	Password       string   `json:"password"`
-	FilesToRestore []string `json:"filesToRestore"`
+	BackupFile string `json:"backupFile"`
+	RestoreDir string `json:"restoreDir"`
+	Password   string `json:"password"`
 }
 
 func (a *App) StartRestore(config RestoreConfig) (string, error) {
@@ -198,31 +193,30 @@ func (a *App) StartRestore(config RestoreConfig) (string, error) {
 	defer func() { a.cancel = nil }()
 
 	log.Printf("Starting restore of %s to %s", config.BackupFile, config.RestoreDir)
-
 	manager := core.NewBackupManager(opCtx)
 
-	// Set up conflict handler
 	manager.ConflictHandler = func(path string) core.ConflictAction {
 		res, err := runtime.MessageDialog(opCtx, runtime.MessageDialogOptions{
 			Type:    runtime.QuestionDialog,
-			Title:   "File Conflict",
-			Message: fmt.Sprintf("File already exists: %s\nWhat would you like to do?", path),
-			Buttons: []string{"Overwrite", "Skip", "Keep Both"},
+			Title:   "文件冲突",
+			Message: fmt.Sprintf("文件已存在: %s\n您希望如何处理？", path),
+			Buttons: []string{"覆盖", "跳过", "保留两者"},
 		})
 		if err != nil {
-			return core.ActionSkip // Default to skip on error
+			return core.ActionSkip
 		}
 		switch res {
-		case "Overwrite":
+		case "覆盖":
 			return core.ActionOverwrite
-		case "Keep Both":
+		case "保留两者":
 			return core.ActionKeepBoth
 		default:
 			return core.ActionSkip
 		}
 	}
 
-	err := manager.Restore(config.BackupFile, config.RestoreDir, config.Password, config.FilesToRestore)
+	// The `filesToRestore` parameter is removed, indicating a full restore.
+	err := manager.Restore(config.BackupFile, config.RestoreDir, config.Password)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			log.Println("Restore was cancelled by user.")
@@ -237,20 +231,7 @@ func (a *App) StartRestore(config RestoreConfig) (string, error) {
 	}
 
 	log.Println("Restore completed successfully.")
-	return "Restore completed successfully!", nil
-}
-
-// ListBackupContents reads an archive and returns its file list without extracting.
-func (a *App) ListBackupContents(filePath, password string) ([]core.FileMetadata, error) {
-	manager := core.NewBackupManager(a.ctx)
-	contents, err := manager.ListContents(filePath, password)
-	if err != nil {
-		if errors.Is(err, core.ErrPasswordRequired) {
-			return nil, fmt.Errorf("password_required")
-		}
-		return nil, err
-	}
-	return contents, nil
+	return "恢复备份成功！", nil
 }
 
 // --- Database Functions ---
@@ -280,6 +261,10 @@ func (a *App) GetBackupHistory() ([]BackupRecord, error) {
 	defer rows.Close()
 
 	var records []BackupRecord
+	var validRecords []BackupRecord
+	var invalidIDs []int // 存储不存在文件的记录ID
+
+	// 先获取所有记录
 	for rows.Next() {
 		var r BackupRecord
 		if err := rows.Scan(&r.ID, &r.FileName, &r.BackupPath, &r.CreatedAt); err != nil {
@@ -287,5 +272,35 @@ func (a *App) GetBackupHistory() ([]BackupRecord, error) {
 		}
 		records = append(records, r)
 	}
-	return records, nil
+
+	// 检查文件是否存在
+	for _, record := range records {
+		if _, err := os.Stat(record.BackupPath); err == nil {
+			// 文件存在，添加到有效记录中
+			validRecords = append(validRecords, record)
+		} else {
+			// 文件不存在，记录需要删除的ID
+			invalidIDs = append(invalidIDs, record.ID)
+		}
+	}
+
+	// 删除不存在的文件记录
+	if len(invalidIDs) > 0 {
+		// 构建占位符
+		placeholders := strings.Repeat("?,", len(invalidIDs)-1) + "?"
+		query := fmt.Sprintf("DELETE FROM backups WHERE id IN (%s)", placeholders)
+
+		// 构建参数
+		args := make([]interface{}, len(invalidIDs))
+		for i, id := range invalidIDs {
+			args[i] = id
+		}
+
+		_, err = a.db.Exec(query, args...)
+		if err != nil {
+			log.Printf("清理无效备份记录时出错: %v", err)
+		}
+	}
+
+	return validRecords, nil
 }

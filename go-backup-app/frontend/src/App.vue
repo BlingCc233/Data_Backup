@@ -1,7 +1,6 @@
 <template>
   <div id="app-container">
     <!-- Main View: Home Screen -->
-
     <main class="main-content" v-if="currentScreen === 'home'">
       <div class="home-screen">
         <h1 class="home-title">GoBackup</h1>
@@ -23,11 +22,11 @@
     <!-- Nested Views: Backup/Restore pages -->
     <main class="main-content" v-else>
       <div class="view-header">
-        <button class="back-button" @click="navigateBack">← 返回</button>
+        <button class="back-button" @click="navigateBack">← 返回首页</button>
         <h2 class="view-title">{{ viewTitle }}</h2>
       </div>
 
-      <!-- Backup View -->
+      <!-- Backup View (Unchanged from previous revision, but included for completeness) -->
       <div v-if="currentScreen === 'backup'" class="view">
         <!-- Step 1: Select Paths & Files -->
         <div v-if="backupStep === 1">
@@ -87,7 +86,6 @@
               例如，在选中的文件夹中排除所有 `.tmp` 文件。
             </p>
             <div class="filter-grid">
-              <!-- Name Filters -->
               <div class="filter-group">
                 <label>包含名称 (e.g. `*.log`, `data*`)</label>
                 <textarea v-model="filters.includeNames" placeholder="一行一个匹配模式"></textarea>
@@ -96,7 +94,6 @@
                 <label>排除名称 (e.g. `*.tmp`, `cache*`)</label>
                 <textarea v-model="filters.excludeNames" placeholder="一行一个匹配模式"></textarea>
               </div>
-              <!-- Size Filters -->
               <div class="filter-group">
                 <label>最小大小</label>
                 <div class="size-input">
@@ -115,7 +112,6 @@
                   </select>
                 </div>
               </div>
-              <!-- Date Filters -->
               <div class="filter-group">
                 <label>晚于此日期</label>
                 <input type="date" v-model="filters.newerThan">
@@ -160,7 +156,6 @@
                 </div>
               </div>
             </div>
-
             <div class="card">
               <h3>目标位置</h3>
               <div class="input-group">
@@ -169,8 +164,6 @@
                 <button @click="selectDestDir">选择</button>
               </div>
             </div>
-
-
             <div class="action-bar">
               <button @click="backupStep = 2">上一步</button>
               <button class="primary" @click="doBackup" :disabled="!backupDest || (encryption.enabled && !encryption.password)">
@@ -178,9 +171,11 @@
               </button>
             </div>
           </div>
-          <div v-else class="progress-view">
+          <!-- Backup Progress View -->
+          <div v-if="currentScreen === 'backup' && backupStep === 3 && inProgress" class="progress-view">
             <h3>正在备份...</h3>
-            <progress :value="progress.value" :max="progress.max"></progress>
+            <progress :value="progress.value" :max="100"></progress>
+            <div class="progress-stage">{{ getProgressStageText() }}</div>
             <p class="status">{{ statusMessage }}</p>
             <div class="action-bar">
               <button class="danger" @click="stopOperation">停止备份</button>
@@ -191,13 +186,12 @@
 
       <!-- Restore View -->
       <div v-if="currentScreen === 'restore'" class="view">
-        <!-- Step 1: Select Backup -->
-        <div v-if="restoreStep === 1">
+        <div v-if="!inProgress">
           <div class="card">
-            <h3>Step 1: 选择一个备份记录</h3>
-            <p class="description">这里显示了您最近的备份记录。点击一项来查看其内容并进行恢复。</p>
+            <h3>从最近的备份恢复</h3>
+            <p class="description">点击一项来选择它作为恢复源。</p>
             <div class="backup-history-list">
-              <div v-for="item in backupHistory" :key="item.ID" class="history-item" @click="selectBackupFromHistory(item)">
+              <div v-for="item in backupHistory" :key="item.ID" class="history-item" @click="restoreFile = item.BackupPath">
                 <div class="history-item-main">
                   <span class="history-file">{{ item.FileName }}</span>
                   <span class="history-date">{{ formatDate(item.CreatedAt) }}</span>
@@ -210,93 +204,42 @@
             </div>
           </div>
           <div class="card">
-            <h3>或者, 手动选择备份文件</h3>
+            <h3>手动选择</h3>
             <div class="input-group">
-              <label>备份文件 (.qbak):</label>
+              <label>备份文件:</label>
               <input v-model="restoreFile" readonly type="text" placeholder="选择一个 .qbak 文件" />
               <button @click="selectRestoreFileManually">选择</button>
             </div>
-          </div>
-        </div>
-
-        <!-- Step 2: Select files to restore / Enter Password -->
-        <div v-if="restoreStep === 2">
-          <div class="card">
-            <h3>Step 2: 选择要恢复的内容</h3>
-            <p class="description">您选择的备份文件 <strong>{{ selectedRestoreFile.name }}</strong> 是加密的。请输入密码以查看内容并继续。</p>
             <div class="input-group">
-              <label>密码:</label>
-              <input type="password" v-model="restorePasswordInput" @keyup.enter="listRestoreFiles" placeholder="输入备份密码" />
-            </div>
-          </div>
-          <div class="action-bar">
-            <button @click="restoreStep = 1">上一步</button>
-            <button class="primary" @click="listRestoreFiles" :disabled="!restorePasswordInput">查看文件</button>
-          </div>
-        </div>
-
-        <!-- Step 3: File List & Destination -->
-        <div v-if="restoreStep === 3">
-          <div class="card file-list-card">
-            <div class="file-list-header">
-              <h3>备份内容 ({{ selectedRestoreFile.name }})</h3>
-              <span>共 {{ restoreFiles.length }} 项</span>
-            </div>
-            <table class="file-table">
-              <thead>
-              <tr>
-                <th class="col-checkbox"><input type="checkbox" @change="toggleSelectAllRestoreFiles" :checked="allRestoreFilesSelected"></th>
-                <th>名称</th>
-                <th>大小</th>
-                <th>修改时间</th>
-              </tr>
-              </thead>
-              <tbody>
-              <tr v-for="file in restoreFiles" :key="file.path">
-                <td><input type="checkbox" v-model="file.selected"></td>
-                <td class="col-name">
-                  <span class="file-icon">{{ file.isDir ? '📁' : '📄' }}</span>
-                  {{ file.path }}
-                </td>
-                <td>{{ formatSize(file.size) }}</td>
-                <td>{{ formatDate(file.modTime) }}</td>
-              </tr>
-              </tbody>
-            </table>
-          </div>
-          <div class="card">
-            <h3>恢复到...</h3>
-            <div class="input-group">
-              <label>目标目录:</label>
+              <label>恢复到目录:</label>
               <input v-model="restoreDir" readonly type="text" placeholder="选择恢复文件的位置" />
               <button @click="selectRestoreDir">选择</button>
             </div>
           </div>
           <div class="action-bar">
-            <button @click="navigateBack">上一步</button>
-            <button class="primary" @click="doRestore()" :disabled="!restoreDir || selectedRestoreFileCount === 0">
-              开始恢复 ({{ selectedRestoreFileCount }} 项)
+            <button class="primary" @click="doRestore()" :disabled="!restoreFile || !restoreDir || inProgress">
+              开始恢复
             </button>
           </div>
         </div>
-
-        <!-- Step 4: Restore Progress -->
-        <div v-if="restoreStep === 4">
-          <div class="progress-view">
-            <h3>正在恢复...</h3>
-            <progress :value="progress.value" :max="progress.max"></progress>
-            <p class="status">{{ statusMessage }}</p>
-            <div class="action-bar">
-              <button class="danger" @click="stopOperation">停止恢复</button>
-            </div>
+        <!-- Restore Progress View -->
+        <div v-if="currentScreen === 'restore' && inProgress" class="progress-view">
+          <h3>正在恢复...</h3>
+          <progress :value="progress.value" :max="100"></progress>
+          <div class="progress-stage">{{ getProgressStageText() }}</div>
+          <p class="status">{{ statusMessage }}</p>
+          <div class="log-box" style="height: 300px; margin-bottom: 1rem;">
+            <p v-for="(msg, index) in logMessages" :key="index">{{ msg }}</p>
+          </div>
+          <div class="action-bar">
+            <button class="danger" @click="stopOperation">停止恢复</button>
           </div>
         </div>
       </div>
-
     </main>
 
-    <!-- Global Log Section -->
-    <div class="log-card-container" v-if="currentScreen !== 'home'">
+    <!-- Global Log Section (only shown for backup) -->
+    <div class="log-card-container" v-if="currentScreen === 'backup'">
       <div class="log-card">
         <h3>日志输出</h3>
         <p class="status">{{ statusMessage }}</p>
@@ -305,24 +248,65 @@
         </div>
       </div>
     </div>
+
+    <!-- Password Modal -->
+    <div v-if="isPasswordModalVisible" class="modal-overlay">
+      <div class="modal-content">
+        <h3>需要密码</h3>
+        <p>此备份文件已加密。请输入密码以继续恢复。</p>
+        <div class="input-group modal-input">
+          <label>密码:</label>
+          <input
+              type="password"
+              v-model="restorePasswordInput"
+              @keyup.enter="submitPasswordAndRetryRestore"
+              placeholder="输入备份密码"
+              ref="passwordInputRef"
+          />
+        </div>
+        <div class="modal-actions">
+          <button @click="cancelPasswordPrompt">取消</button>
+          <button class="primary" @click="submitPasswordAndRetryRestore">提交</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Success Modal -->
+    <div v-if="showSuccessModal" class="modal-overlay">
+      <div class="modal-content success-modal">
+        <h3>操作成功</h3>
+        <p>{{ successMessage }}</p>
+        <div class="modal-actions">
+          <button class="primary" @click="closeSuccessModal">确定</button>
+        </div>
+      </div>
+    </div>
+
   </div>
+
 </template>
 
 <script setup>
-import {ref, onMounted, reactive, computed, watch} from 'vue';
+import {ref, onMounted, reactive, computed, nextTick} from 'vue';
 import {
   SelectFiles, SelectDirectory, GetFileMetadata, StartBackup, StopOperation,
-  GetBackupHistory, ListBackupContents, StartRestore, OpenInExplorer
+  GetBackupHistory, StartRestore, OpenInExplorer
 } from '../wailsjs/go/main/App';
-import { EventsOn, EventsOnce } from '../wailsjs/runtime/runtime';
+import { EventsOn } from '../wailsjs/runtime/runtime';
 
 // --- Global State ---
 const currentScreen = ref('home'); // 'home', 'backup', 'restore'
-const historyStack = ref(['home']);
 const inProgress = ref(false);
 const statusMessage = ref('准备就绪。');
 const logMessages = ref([]);
 const progress = reactive({ value: 0, max: 100 });
+const isPasswordModalVisible = ref(false);
+const restorePasswordInput = ref('');
+const passwordInputRef = ref(null);
+
+// 添加进度阶段状态
+const progressStage = ref(''); // 'compressing', 'encrypting', 'archiving', 'decrypting', 'decompressing', 'restoring'
+const progressStartTime = ref(0);
 
 // --- Navigation ---
 const viewTitle = computed(() => {
@@ -333,18 +317,17 @@ const viewTitle = computed(() => {
 
 function navigateTo(screen) {
   currentScreen.value = screen;
-  historyStack.value.push(screen);
   // Reset states when entering a new screen
-  if(screen === 'backup') resetBackupState();
-  if(screen === 'restore') resetRestoreState();
+  if (screen === 'backup') resetBackupState();
+  if (screen === 'restore') resetRestoreState();
 }
 
+// Back button always returns to home
 function navigateBack() {
   currentScreen.value = 'home';
-  historyStack.value = ['home']; // 重置历史栈，只保留首页
-  // 重置备份和恢复状态
-  resetBackupState();
-  resetRestoreState();
+  if (inProgress.value) {
+    stopOperation();
+  }
 }
 
 
@@ -352,31 +335,52 @@ function navigateBack() {
 const backupStep = ref(1);
 const backupFiles = ref([]);
 const backupDest = ref('');
-const sort = reactive({ key: 'name', order: 'asc' });
-
+const sort = reactive({key: 'name', order: 'asc'});
 const filters = ref({
   includeNames: '', excludeNames: '', minSizeValue: 0, minSizeUnit: 'Bytes',
   maxSizeValue: 0, maxSizeUnit: 'Bytes', newerThan: null, olderThan: null,
 });
-const encryption = reactive({ enabled: false, password: '', algorithm: 'AES-256' });
+const encryption = reactive({enabled: false, password: '', algorithm: 'AES-256'});
+
+
 
 function resetBackupState() {
   backupStep.value = 1;
   backupFiles.value = [];
   backupDest.value = '';
-  // reset filters and encryption if needed
+  inProgress.value = false;
 }
+
+// 添加获取进度阶段文本的函数
+function getProgressStageText() {
+  switch (progressStage.value) {
+    case 'compressing':
+      return '压缩中...';
+    case 'encrypting':
+      return '加密中...';
+    case 'archiving':
+      return '存档中...';
+    case 'decrypting':
+      return '解密中...';
+    case 'decompressing':
+      return '解压缩中...';
+    case 'restoring':
+      return '恢复文件中...';
+    default:
+      return '处理中...';
+  }
+}
+
 
 async function selectBackupSources(type) {
   try {
     const paths = await SelectFiles(type === 'dirs');
     if (paths && paths.length > 0) {
       const metadata = await GetFileMetadata(paths);
-      // Add 'selected' property and prevent duplicates
       const existingPaths = new Set(backupFiles.value.map(f => f.path));
       metadata.forEach(m => {
         if (!existingPaths.has(m.path)) {
-          backupFiles.value.push({ ...m, selected: true });
+          backupFiles.value.push({...m, selected: true});
         }
       });
     }
@@ -384,7 +388,12 @@ async function selectBackupSources(type) {
     statusMessage.value = `Error selecting sources: ${error}`;
   }
 }
-const selectDestDir = async () => { if(inProgress.value) return; const dir = await SelectDirectory(); if (dir) backupDest.value = dir; };
+
+const selectDestDir = async () => {
+  if (inProgress.value) return;
+  const dir = await SelectDirectory();
+  if (dir) backupDest.value = dir;
+};
 
 const sortedBackupFiles = computed(() => {
   return [...backupFiles.value].sort((a, b) => {
@@ -412,6 +421,66 @@ function toggleSelectAllBackupFiles(event) {
   backupFiles.value.forEach(f => f.selected = isChecked);
 }
 
+// 添加计算对数进度的函数
+function calculateLogProgress(elapsedTime) {
+  const maxTime = 200 * 1000; // 毫秒
+  // 使用对数函数实现由快到慢的进度
+  if (elapsedTime >= maxTime) return 90;
+
+  // 对数进度计算 (以10为底)
+  const progress = Math.log10(1 + 9 * (elapsedTime / maxTime)) * 100;
+  return Math.min(99, Math.max(0, progress));
+}
+
+// 添加更新进度的函数
+function updateProgress() {
+  if (!inProgress.value || progressStartTime.value === 0) return;
+
+  const elapsed = Date.now() - progressStartTime.value;
+  progress.value = calculateLogProgress(elapsed);
+
+  // 特殊处理加密情况下的进度提示切换
+  if (currentScreen.value === 'backup' && encryption.enabled) {
+    if (progress.value >= 44 && progressStage.value === 'compressing') {
+      progressStage.value = 'encrypting';
+    } else if (progress.value >= 88 && progressStage.value === 'encrypting') {
+      progressStage.value = 'archiving';
+    }
+  } else if (currentScreen.value === 'backup' && !encryption.enabled) {
+    if (progress.value >= 70 && progressStage.value === 'archiving') {
+      progressStage.value = 'archiving';
+    }
+  }
+
+  if (currentScreen.value === 'restore'){
+    if (progress.value >= 44 && progressStage.value === 'decrypting'){
+      progressStage.value = 'decompressing';
+    } else if (progress.value >= 88 && progressStage.value === 'decompressing'){
+      progressStage.value = 'restoring';
+    }
+  }
+
+  // 根据阶段更新状态消息
+  if (progressStage.value === 'compressing') {
+    statusMessage.value = "正在压缩...";
+  } else if (progressStage.value === 'encrypting') {
+    statusMessage.value = "正在加密...";
+  } else if (progressStage.value === 'archiving') {
+    statusMessage.value = "正在存档...";
+  } else if (progressStage.value === 'decrypting') {
+    statusMessage.value = "正在解密...";
+  } else if (progressStage.value === 'decompressing') {
+    statusMessage.value = "正在解压缩...";
+  } else if (progressStage.value === 'restoring') {
+    statusMessage.value = "正在恢复文件...";
+  }
+
+  // 继续更新进度直到操作完成
+  if (inProgress.value) {
+    setTimeout(updateProgress, 100);
+  }
+}
+
 async function doBackup() {
   const selectedPaths = backupFiles.value.filter(f => f.selected).map(f => f.path);
   if (selectedPaths.length === 0 || !backupDest.value) {
@@ -427,9 +496,12 @@ async function doBackup() {
   statusMessage.value = "准备备份...";
   logMessages.value = [];
   progress.value = 0;
-  progress.max = selectedPaths.length; // Approximate max value
+  progressStartTime.value = Date.now();
+  progressStage.value = 'compressing';
 
-  const multipliers = { Bytes: 1, KB: 1024, MB: 1024**2, GB: 1024**3 };
+  updateProgress();
+
+  const multipliers = {Bytes: 1, KB: 1024, MB: 1024 ** 2, GB: 1024 ** 3};
   const convertToBytes = (value, unit) => (value || 0) * (multipliers[unit] || 1);
   const minSize = convertToBytes(filters.value.minSizeValue, filters.value.minSizeUnit);
   let maxSize = convertToBytes(filters.value.maxSizeValue, filters.value.maxSizeUnit);
@@ -452,7 +524,17 @@ async function doBackup() {
       encryptionAlgorithm: encryption.algorithm,
       encryptionPassword: encryption.password,
     });
+
     statusMessage.value = result;
+
+    // 备份完成，进度条拉满
+    progress.value = 100;
+
+    // 显示成功弹窗
+    if (result.includes("成功")) {
+      successMessage.value = "备份完成！";
+      showSuccessModal.value = true;
+    }
   } catch (error) {
     statusMessage.value = `错误: ${error}`;
   } finally {
@@ -462,110 +544,109 @@ async function doBackup() {
 }
 
 // --- Restore State & Logic ---
-const restoreStep = ref(1);
 const backupHistory = ref([]);
-const restoreFile = ref(''); // manual selection path
-const selectedRestoreFile = ref({ name: '', path: '', isEncrypted: false });
+const restoreFile = ref('');
 const restoreDir = ref('');
-const restorePasswordInput = ref('');
-const restoreFiles = ref([]); // files inside backup
 
 function resetRestoreState() {
-  restoreStep.value = 1;
   restoreFile.value = '';
-  selectedRestoreFile.value = { name: '', path: '', isEncrypted: false };
   restoreDir.value = '';
+  backupHistory.value = [];
   restorePasswordInput.value = '';
-  restoreFiles.value = [];
+  inProgress.value = false;
+  isPasswordModalVisible.value = false;
   fetchBackupHistory();
 }
 
 async function fetchBackupHistory() {
   try {
     backupHistory.value = await GetBackupHistory();
-  } catch(e) {
+  } catch (e) {
     statusMessage.value = `无法加载备份历史: ${e}`;
   }
 }
 
-function selectBackupFromHistory(item) {
-  selectedRestoreFile.value.name = item.FileName;
-  selectedRestoreFile.value.path = item.BackupPath;
-  listRestoreFiles();
-}
-
 async function selectRestoreFileManually() {
-  const path = await SelectFiles(false); // false for file
+  const path = await SelectFiles(false); // false for file, returns array
   if (path && path.length > 0) {
     restoreFile.value = path[0];
-    selectedRestoreFile.value.path = path[0];
-    selectedRestoreFile.value.name = path[0].split(/[/\\]/).pop();
-    listRestoreFiles();
   }
 }
 
-async function listRestoreFiles() {
-  if (!selectedRestoreFile.value.path) return;
-  statusMessage.value = "正在读取备份文件内容...";
-  try {
-    const result = await ListBackupContents(selectedRestoreFile.value.path, restorePasswordInput.value);
-    selectedRestoreFile.value.isEncrypted = false; // success, not encrypted or password correct
-    restoreFiles.value = result.map(f => ({...f, selected: true}));
-    restoreStep.value = 3;
-  } catch (error) {
-    if (error.includes("password_required")) {
-      selectedRestoreFile.value.isEncrypted = true;
-      restoreStep.value = 2; // Go to password page
-      statusMessage.value = "此备份已加密，请输入密码。";
-    } else {
-      statusMessage.value = `无法读取备份文件: ${error}`;
-      // Go back to selection
-      restoreStep.value = 1;
-    }
-  }
-}
+const selectRestoreDir = async () => {
+  if (inProgress.value) return;
+  const dir = await SelectDirectory();
+  if (dir) restoreDir.value = dir;
+};
 
-const allRestoreFilesSelected = computed(() => restoreFiles.value.length > 0 && restoreFiles.value.every(f => f.selected));
-const selectedRestoreFileCount = computed(() => restoreFiles.value.filter(f => f.selected).length);
-
-function toggleSelectAllRestoreFiles(event) {
-  const isChecked = event.target.checked;
-  restoreFiles.value.forEach(f => f.selected = isChecked);
-}
-const selectRestoreDir = async () => { if(inProgress.value) return; const dir = await SelectDirectory(); if (dir) restoreDir.value = dir; };
-
-async function doRestore() {
-  const filesToRestore = restoreFiles.value.filter(f => f.selected).map(f => f.path);
-  if (!selectedRestoreFile.value.path || !restoreDir.value || filesToRestore.length === 0) {
-    statusMessage.value = "请选择备份文件、要恢复的文件和目标目录。";
+async function doRestore(password) {
+  let cleanPassword = (typeof password === 'string') ? password : '';
+  if (!restoreFile.value || !restoreDir.value) {
+    statusMessage.value = "请选择备份文件和恢复目录。";
     return;
   }
 
   inProgress.value = true;
-  restoreStep.value = 4;
-  statusMessage.value = "准备恢复...";
-  logMessages.value = [];
+  statusMessage.value = "恢复进行中...";
+  if (cleanPassword === '') {
+    logMessages.value = [];
+  }
+
   progress.value = 0;
-  progress.max = filesToRestore.length;
+  progressStartTime.value = Date.now();
+  progressStage.value = 'decrypting';
+
+  updateProgress();
 
   try {
     const result = await StartRestore({
-      backupFile: selectedRestoreFile.value.path,
+      backupFile: restoreFile.value,
       restoreDir: restoreDir.value,
-      password: restorePasswordInput.value,
-      filesToRestore: filesToRestore,
+      password: cleanPassword,
     });
     statusMessage.value = result;
+
+    progress.value = 100;
+
+    // 显示成功弹窗
     if (result.includes("成功")) {
+      successMessage.value = "恢复完成！";
+      showSuccessModal.value = true;
       await OpenInExplorer(restoreDir.value);
     }
   } catch (error) {
-    statusMessage.value = `错误: ${error}`;
+    if (typeof error === 'string' && error.includes("password_required")) {
+      inProgress.value = false;
+      statusMessage.value = "此备份已加密，请输入密码。";
+      isPasswordModalVisible.value = true;
+      await nextTick();
+      passwordInputRef.value?.focus();
+    } else {
+      statusMessage.value = `错误: ${error}`;
+    }
   } finally {
-    inProgress.value = false;
-    // Optionally go back to the list
-    // restoreStep.value = 3;
+    if (!isPasswordModalVisible.value) {
+      inProgress.value = false;
+    }
   }
+}
+
+function submitPasswordAndRetryRestore() {
+  if (!restorePasswordInput.value) {
+    alert("密码不能为空。");
+    return;
+  }
+  isPasswordModalVisible.value = false;
+  inProgress.value = true;
+  doRestore(restorePasswordInput.value); // Retry with password
+  restorePasswordInput.value = '';
+}
+
+function cancelPasswordPrompt() {
+  isPasswordModalVisible.value = false;
+  statusMessage.value = "未提供密码，恢复已取消。";
+  inProgress.value = false;
+  restorePasswordInput.value = '';
 }
 
 // --- Common & Helpers ---
@@ -573,9 +654,10 @@ function stopOperation() {
   StopOperation();
   inProgress.value = false;
   statusMessage.value = "操作已停止。";
-  // Rollback to previous step
-  if (currentScreen.value === 'backup' && backupStep.value === 3) backupStep.value = 2;
-  if (currentScreen.value === 'restore' && restoreStep.value === 4) restoreStep.value = 3;
+  progressStartTime.value = 0;
+  if (currentScreen.value === 'backup') {
+    backupStep.value = Math.max(1, backupStep.value - 1);
+  }
 }
 
 const formatSize = (bytes) => {
@@ -594,20 +676,32 @@ const formatDate = (dateString) => {
 onMounted(() => {
   EventsOn("log_message", (data) => {
     logMessages.value.unshift(data);
+    statusMessage.value = data; // Also update status for real-time feedback
     if (logMessages.value.length > 200) logMessages.value.pop();
   });
   EventsOn("progress_update", (p) => {
     statusMessage.value = p.message;
-    progress.value = p.current;
-    if (p.total > 0) progress.max = p.total;
   });
 
   fetchBackupHistory();
 });
+
+
+// 添加成功弹窗状态
+const showSuccessModal = ref(false);
+const successMessage = ref('');
+
+// 添加关闭成功弹窗并返回首页的函数
+function closeSuccessModal() {
+  showSuccessModal.value = false;
+  currentScreen.value = 'home';
+  resetBackupState();
+  resetRestoreState();
+}
 </script>
 
 <style>
-/* Keeping original styles and adding new ones */
+/* Keeping original styles and adding/modifying new ones */
 :root {
   --bg-color: #1a202c;
   --sidebar-bg: #2d3748; /* Re-purposed for cards */
@@ -631,7 +725,7 @@ body, html {
 
 #app-container {
   display: flex;
-  flex-direction: column; /* Changed for new layout */
+  flex-direction: column;
   height: 100vh;
 }
 
@@ -643,17 +737,20 @@ body, html {
   display: flex;
   flex-direction: column;
 }
+
 .view h2, .view-title {
   font-size: 1.8rem;
   font-weight: 600;
   margin-bottom: 0;
 }
+
 .card {
   background-color: var(--card-bg);
   border-radius: 8px;
   padding: 1.5rem;
   margin-bottom: 1.5rem;
 }
+
 .card h3 {
   margin-top: 0;
   font-size: 1.2rem;
@@ -662,6 +759,7 @@ body, html {
   padding-bottom: 0.75rem;
   margin-bottom: 1rem;
 }
+
 .description {
   color: var(--text-color-light);
   font-size: 0.95rem;
@@ -679,15 +777,18 @@ body, html {
   height: 100%;
   text-align: center;
 }
+
 .home-title {
   font-size: 3rem;
   font-weight: 700;
   margin-bottom: 2rem;
 }
+
 .home-actions {
   display: flex;
   gap: 2rem;
 }
+
 .action-card {
   background-color: var(--card-bg);
   padding: 2rem 3rem;
@@ -696,19 +797,23 @@ body, html {
   transition: transform 0.2s ease, box-shadow 0.2s ease;
   border: 1px solid var(--border-color);
 }
+
 .action-card:hover {
   transform: translateY(-5px);
-  box-shadow: 0 10px 20px rgba(0,0,0,0.2);
+  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
   border-color: var(--primary-color);
 }
+
 .action-card .icon {
   font-size: 4rem;
   line-height: 1;
 }
+
 .action-card h2 {
   font-size: 1.5rem;
   margin: 1rem 0 0.5rem;
 }
+
 .action-card p {
   color: var(--text-color-light);
   margin: 0;
@@ -723,6 +828,7 @@ body, html {
   margin-bottom: 1.5rem;
   border-bottom: 1px solid var(--border-color);
 }
+
 .back-button {
   background: none;
   border: 1px solid var(--border-color);
@@ -732,11 +838,11 @@ body, html {
   border-radius: 6px;
   cursor: pointer;
 }
+
 .back-button:hover {
   background-color: var(--card-bg);
   color: var(--text-color);
 }
-
 
 /* Forms & Inputs */
 .input-group {
@@ -744,6 +850,7 @@ body, html {
   align-items: center;
   margin-bottom: 1rem;
 }
+
 .input-group label {
   width: 120px;
   text-align: right;
@@ -751,6 +858,7 @@ body, html {
   color: var(--text-color-light);
   flex-shrink: 0;
 }
+
 .input-group input[type="text"],
 .input-group input[type="password"],
 .input-group input[type="date"] {
@@ -761,6 +869,7 @@ body, html {
   color: var(--text-color);
   border-radius: 4px;
 }
+
 textarea {
   width: 100%;
   min-height: 80px;
@@ -773,7 +882,10 @@ textarea {
 }
 
 /* File List Table */
-.file-list-card { padding: 0; }
+.file-list-card {
+  padding: 0;
+}
+
 .file-list-header {
   display: flex;
   justify-content: space-between;
@@ -781,36 +893,61 @@ textarea {
   padding: 1.5rem;
   border-bottom: 1px solid var(--border-color);
 }
+
 .file-list-header h3 {
   border: none;
   padding: 0;
   margin: 0;
 }
+
 .file-table {
   width: 100%;
   border-collapse: collapse;
 }
+
 .file-table th, .file-table td {
   padding: 0.75rem 1rem;
   text-align: left;
   border-bottom: 1px solid var(--border-color);
 }
-.file-table tbody tr:last-child td { border-bottom: none; }
+
+.file-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
 .file-table th {
   color: var(--text-color-light);
   font-size: 0.9rem;
   text-transform: uppercase;
 }
-.file-table th.sortable { cursor: pointer; }
-.file-table th.sortable:hover { color: var(--text-color); }
-.file-table .col-checkbox { width: 40px; text-align: center; }
+
+.file-table th.sortable {
+  cursor: pointer;
+}
+
+.file-table th.sortable:hover {
+  color: var(--text-color);
+}
+
+.file-table .col-checkbox {
+  width: 40px;
+  text-align: center;
+}
+
 .file-table .col-name {
   display: flex;
   align-items: center;
   gap: 0.75rem;
 }
-.file-icon { font-size: 1.2rem; }
-.dir-hint { color: var(--text-color-light); margin-left: auto; }
+
+.file-icon {
+  font-size: 1.2rem;
+}
+
+.dir-hint {
+  color: var(--text-color-light);
+  margin-left: auto;
+}
 
 /* Backup History */
 .backup-history-list {
@@ -818,6 +955,7 @@ textarea {
   flex-direction: column;
   gap: 0.5rem;
 }
+
 .history-item {
   background-color: var(--bg-color);
   padding: 0.75rem 1.25rem;
@@ -826,25 +964,44 @@ textarea {
   border: 1px solid var(--border-color);
   transition: background-color 0.2s, border-color 0.2s;
 }
+
 .history-item:hover {
   background-color: rgba(66, 153, 225, 0.1);
   border-color: var(--primary-color);
 }
+
 .history-item-main {
   display: flex;
   justify-content: space-between;
   font-weight: 500;
 }
-.history-date { color: var(--text-color-light); font-size: 0.9rem; }
-.history-path { color: var(--text-color-light); font-size: 0.8rem; }
-.history-empty { text-align: center; padding: 2rem; color: var(--text-color-light); }
+
+.history-date {
+  color: var(--text-color-light);
+  font-size: 0.9rem;
+}
+
+.history-path {
+  color: var(--text-color-light);
+  font-size: 0.8rem;
+}
+
+.history-empty {
+  text-align: center;
+  padding: 2rem;
+  color: var(--text-color-light);
+}
 
 /* Progress View */
 .progress-view {
   text-align: center;
   padding: 2rem;
 }
-.progress-view h3 { margin-top: 0; }
+
+.progress-view h3 {
+  margin-top: 0;
+}
+
 progress {
   width: 100%;
   height: 12px;
@@ -855,53 +1012,241 @@ progress {
   overflow: hidden;
   background-color: var(--bg-color);
 }
-progress::-webkit-progress-bar { background-color: var(--bg-color); }
-progress::-webkit-progress-value { background-color: var(--primary-color); transition: width 0.1s linear; }
 
+progress::-webkit-progress-bar {
+  background-color: var(--bg-color);
+}
+
+progress::-webkit-progress-value {
+  background-color: var(--primary-color);
+  transition: width 0.1s linear;
+}
+
+.progress-stage {
+  margin-top: 0.5rem;
+  font-size: 0.9rem;
+  color: var(--text-color-light);
+  font-style: italic;
+}
 
 /* Actions */
-.action-bar { text-align: right; margin-top: 1.5rem; display: flex; justify-content: flex-end; gap: 1rem; }
-.action-bar-left { text-align: left; display: flex; gap: 1rem; }
-button {
-  padding: 0.6rem 1.2rem; background-color: var(--sidebar-bg);
-  border: 1px solid var(--border-color); color: var(--text-color);
-  border-radius: 6px; cursor: pointer; font-size: 1rem; transition: all 0.2s;
+.action-bar {
+  text-align: right;
+  margin-top: 1.5rem;
+  display: flex;
+  justify-content: flex-end;
+  gap: 1rem;
 }
-button:hover { border-color: var(--primary-color); }
-button.primary { background-color: var(--primary-color); border-color: var(--primary-color); font-weight: 500; }
-button.primary:hover { background-color: var(--primary-color-hover); border-color: var(--primary-color-hover); }
-button.danger { background-color: var(--danger-color); border-color: var(--danger-color); }
-button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.action-bar-left {
+  text-align: left;
+  display: flex;
+  gap: 1rem;
+}
+
+button {
+  padding: 0.6rem 1.2rem;
+  background-color: var(--sidebar-bg);
+  border: 1px solid var(--border-color);
+  color: var(--text-color);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 1rem;
+  transition: all 0.2s;
+}
+
+button:hover {
+  border-color: var(--primary-color);
+}
+
+button.primary {
+  background-color: var(--primary-color);
+  border-color: var(--primary-color);
+  font-weight: 500;
+}
+
+button.primary:hover {
+  background-color: var(--primary-color-hover);
+  border-color: var(--primary-color-hover);
+}
+
+button.danger {
+  background-color: var(--danger-color);
+  border-color: var(--danger-color);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 
 /* Log Section (at the bottom) */
 .log-card-container {
   flex-shrink: 0;
   padding: 0 2rem 2rem 2rem;
 }
+
 .log-card {
   margin-top: 0;
   background-color: var(--card-bg);
   border-radius: 8px;
   padding: 1rem 1.5rem;
 }
-.log-card h3 { margin: 0; font-size: 1rem; color: var(--text-color-light); }
-.status { color: var(--text-color-light); font-style: italic; font-size: 0.9rem; }
-.log-box {
-  height: 150px; overflow-y: auto; background-color: #000;
-  border: 1px solid var(--border-color); text-align: left; padding: 10px;
-  border-radius: 4px; font-family: monospace; font-size: 0.9em;
-  display: flex; flex-direction: column-reverse;
+
+.log-card h3 {
+  margin: 0;
+  font-size: 1rem;
+  color: var(--text-color-light);
 }
 
+.status {
+  color: var(--text-color-light);
+  font-style: italic;
+  font-size: 0.9rem;
+}
+
+.log-box {
+  height: 150px;
+  overflow-y: auto;
+  background-color: #000;
+  border: 1px solid var(--border-color);
+  text-align: left;
+  padding: 10px;
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 0.9em;
+  display: flex;
+  flex-direction: column-reverse;
+}
+
+/* Modal Styles */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.6);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+}
+
+.modal-content {
+  background-color: var(--sidebar-bg);
+  padding: 2rem;
+  border-radius: 8px;
+  width: 90%;
+  max-width: 500px;
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+}
+
+.modal-content h3 {
+  margin-top: 0;
+  font-size: 1.5rem;
+}
+
+.modal-content p {
+  color: var(--text-color-light);
+  margin-bottom: 1.5rem;
+}
+
+.modal-input {
+  margin-bottom: 2rem;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 1rem;
+}
+
+
 /* Other component styles (from original) */
-.filter-grid { grid-template-columns: 1fr 1fr; gap: 1.5rem; display: grid; }
-.filter-group label { display: block; margin-bottom: 0.5rem; color: var(--text-color-light); font-size: 0.9rem; }
-.size-input { display: flex; }
-.size-input input { flex-grow: 1; border-radius: 4px 0 0 4px; border-right: none; }
-.size-input select { padding: 0 0.5rem; background-color: var(--sidebar-bg); border: 1px solid var(--border-color); color: var(--text-color); border-radius: 0 4px 4px 0; }
-.encryption-options { margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid var(--border-color); }
-input[type="checkbox"].toggle { -webkit-appearance: none; appearance: none; width: 40px; height: 22px; background-color: #4a5568; border-radius: 11px; position: relative; cursor: pointer; transition: background-color 0.2s; }
-input[type="checkbox"].toggle::before { content: ''; position: absolute; width: 18px; height: 18px; border-radius: 50%; background-color: white; top: 2px; left: 2px; transition: transform 0.2s; }
-input[type="checkbox"].toggle:checked { background-color: var(--primary-color); }
-input[type="checkbox"].toggle:checked::before { transform: translateX(18px); }
+.filter-grid {
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+  display: grid;
+}
+
+.filter-group label {
+  display: block;
+  margin-bottom: 0.5rem;
+  color: var(--text-color-light);
+  font-size: 0.9rem;
+}
+
+.size-input {
+  display: flex;
+}
+
+.size-input input {
+  flex-grow: 1;
+  border-radius: 4px 0 0 4px;
+  border-right: none;
+}
+
+.size-input select {
+  padding: 0 0.5rem;
+  background-color: var(--sidebar-bg);
+  border: 1px solid var(--border-color);
+  color: var(--text-color);
+  border-radius: 0 4px 4px 0;
+}
+
+.encryption-options {
+  margin-top: 1.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--border-color);
+}
+
+input[type="checkbox"].toggle {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 40px;
+  height: 22px;
+  background-color: #4a5568;
+  border-radius: 11px;
+  position: relative;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+input[type="checkbox"].toggle::before {
+  content: '';
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background-color: white;
+  top: 2px;
+  left: 2px;
+  transition: transform 0.2s;
+}
+
+input[type="checkbox"].toggle:checked {
+  background-color: var(--primary-color);
+}
+
+input[type="checkbox"].toggle:checked::before {
+  transform: translateX(18px);
+}
+
+/* Success Modal Styles */
+.success-modal {
+  text-align: center;
+}
+
+.success-modal h3 {
+  color: #48bb78; /* Green color for success */
+  font-size: 1.8rem;
+  margin-bottom: 1rem;
+}
+
+.success-modal p {
+  font-size: 1.2rem;
+  margin-bottom: 2rem;
+}
+
 </style>

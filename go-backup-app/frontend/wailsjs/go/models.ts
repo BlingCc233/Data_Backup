@@ -1,48 +1,5 @@
 export namespace core {
 	
-	export class FileMetadata {
-	    path: string;
-	    size: number;
-	    mode: number;
-	    // Go type: time
-	    modTime: any;
-	    isDir: boolean;
-	    isLink: boolean;
-	    linkDest: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new FileMetadata(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.path = source["path"];
-	        this.size = source["size"];
-	        this.mode = source["mode"];
-	        this.modTime = this.convertValues(source["modTime"], null);
-	        this.isDir = source["isDir"];
-	        this.isLink = source["isLink"];
-	        this.linkDest = source["linkDest"];
-	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
-	}
 	export class FilterConfig {
 	    includePaths: string[];
 	    excludePaths: string[];
@@ -218,7 +175,6 @@ export namespace main {
 	    backupFile: string;
 	    restoreDir: string;
 	    password: string;
-	    filesToRestore: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new RestoreConfig(source);
@@ -229,7 +185,6 @@ export namespace main {
 	        this.backupFile = source["backupFile"];
 	        this.restoreDir = source["restoreDir"];
 	        this.password = source["password"];
-	        this.filesToRestore = source["filesToRestore"];
 	    }
 	}
 

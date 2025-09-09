@@ -7,12 +7,12 @@ import (
 	"os"
 	"path/filepath"
 
-	_ "github.com/mattn/go-sqlite3" // SQLite driver
+	_ "github.com/mattn/go-sqlite3"
 )
 
 // InitializeDatabase sets up the SQLite database in the user's app data directory.
 func InitializeDatabase(ctx context.Context) (*sql.DB, error) {
-	appDataDir, err := os.UserHomeDir() // 使用标准库获取用户主目录
+	appDataDir, err := os.UserHomeDir() // 获取用户主目录
 	if err != nil {
 		return nil, err
 	}

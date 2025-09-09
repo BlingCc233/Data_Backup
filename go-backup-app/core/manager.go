@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -66,6 +67,7 @@ func (m *BackupManager) Backup(srcPaths []string, destFile string, filters Filte
 
 	var writer io.WriteCloser = outFile
 	if useEncryption {
+		m.emitProgress("正在加密...", 0, 0)
 		encryptedWriter, err := NewEncryptedWriter(writer, password, algorithm)
 		if err != nil {
 			return fmt.Errorf("failed to create encrypted writer: %w", err)
@@ -75,6 +77,7 @@ func (m *BackupManager) Backup(srcPaths []string, destFile string, filters Filte
 	}
 
 	if useCompression {
+		m.emitProgress("正在压缩...", 0, 0)
 		compressedWriter := NewCompressedWriter(writer)
 		writer = compressedWriter
 		defer writer.Close()
@@ -83,9 +86,29 @@ func (m *BackupManager) Backup(srcPaths []string, destFile string, filters Filte
 	archiveWriter := NewArchiveWriter(writer)
 	archiveMutex := &sync.Mutex{}
 
+	// 计算总文件数（用于进度）
+	totalFiles := 0
+	for _, startPath := range srcPaths {
+		info, err := os.Stat(startPath)
+		if err != nil {
+			continue
+		}
+		if !info.IsDir() {
+			totalFiles++
+		} else {
+			filepath.Walk(startPath, func(path string, info os.FileInfo, err error) error {
+				if err == nil && filters.ShouldInclude(path, info) {
+					totalFiles++
+				}
+				return nil
+			})
+		}
+	}
+
 	pathsChan := make(chan string)
 	errChan := make(chan error, backupWorkers)
 	var wg sync.WaitGroup
+	var processedFiles int32 = 0
 
 	for i := 0; i < backupWorkers; i++ {
 		wg.Add(1)
@@ -98,6 +121,10 @@ func (m *BackupManager) Backup(srcPaths []string, destFile string, filters Filte
 					return
 				default:
 				}
+
+				// 更新进度
+				current := atomic.AddInt32(&processedFiles, 1)
+				m.emitProgress("正在备份文件...", int(current), totalFiles)
 
 				// Determine base directory for relative path calculation
 				var baseDir string
@@ -164,7 +191,7 @@ func (m *BackupManager) Backup(srcPaths []string, destFile string, filters Filte
 					meta.Size = 0
 				}
 
-				m.emitLog(fmt.Sprintf("Archiving: %s", meta.Path))
+				m.emitLog(fmt.Sprintf("正在归档: %s", meta.Path))
 
 				archiveMutex.Lock()
 				err = archiveWriter.WriteEntry(meta, fileReader, buffer)
@@ -177,7 +204,7 @@ func (m *BackupManager) Backup(srcPaths []string, destFile string, filters Filte
 		}()
 	}
 
-	// File discovery goroutine
+	// 多文件（夹）并行读取
 	go func() {
 		defer close(pathsChan)
 		for _, startPath := range srcPaths {
@@ -191,9 +218,9 @@ func (m *BackupManager) Backup(srcPaths []string, destFile string, filters Filte
 				errChan <- err
 				return
 			}
-			if !info.IsDir() { // It's a file
+			if !info.IsDir() { // 如果是文件
 				pathsChan <- startPath
-			} else { // It's a directory
+			} else { // 如果是文件夹
 				walkErr := filepath.Walk(startPath, func(path string, info os.FileInfo, err error) error {
 					if err != nil {
 						return err
@@ -219,40 +246,35 @@ func (m *BackupManager) Backup(srcPaths []string, destFile string, filters Filte
 		return err
 	}
 
+	m.emitProgress("备份完成", totalFiles, totalFiles)
 	return nil
 }
 
-// getReaderPipe sets up the decryption and decompression pipeline for reading an archive.
-func (m *BackupManager) getReaderPipe(backupFile string, password string) (io.Reader, error) {
+func (m *BackupManager) getReaderPipe(backupFile string, password string) (io.ReadCloser, error) {
+
 	inFile, err := os.Open(backupFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open backup file: %w", err)
 	}
-	// Note: We are returning the reader, so we cannot close inFile here. The caller must handle it.
-	// This is a simplification. A better approach would involve a wrapper that closes the file.
 
-	reader := bufio.NewReaderSize(inFile, copyBufferSize)
+	var currentReader io.Reader = bufio.NewReaderSize(inFile, copyBufferSize)
 
-	magic, _ := reader.Peek(len(magicHeader))
-	var finalReader io.Reader = reader
-
+	magic, _ := currentReader.(*bufio.Reader).Peek(len(magicHeader))
 	if bytes.Equal(magic, magicHeader) {
 		log.Println("Encrypted file detected.")
 		if password == "" {
 			inFile.Close()
 			return nil, ErrPasswordRequired
 		}
-		decryptedReader, err := NewDecryptedReader(reader, password)
+		decryptedReader, err := NewDecryptedReader(currentReader, password)
 		if err != nil {
 			inFile.Close()
 			return nil, err
 		}
-		finalReader = decryptedReader
+		currentReader = decryptedReader
 	}
 
-	// Re-buffer the stream after potential decryption
-	bufferedFinalReader := bufio.NewReaderSize(finalReader, copyBufferSize)
-
+	bufferedFinalReader := bufio.NewReaderSize(currentReader, copyBufferSize)
 	magic, err = bufferedFinalReader.Peek(len(huffmanMagic))
 	if err == nil && bytes.Equal(magic, huffmanMagic) {
 		log.Println("Compressed data detected.")
@@ -261,72 +283,43 @@ func (m *BackupManager) getReaderPipe(backupFile string, password string) (io.Re
 			inFile.Close()
 			return nil, fmt.Errorf("failed to create decompressor: %w", err)
 		}
-		finalReader = compressedReader
+		currentReader = compressedReader
 	} else {
-		finalReader = bufferedFinalReader
+		currentReader = bufferedFinalReader
 	}
 
-	return finalReader, nil
+	// Wrap the final reader and the original file closer together.
+	return struct {
+		io.Reader
+		io.Closer
+	}{
+		Reader: currentReader,
+		Closer: inFile,
+	}, nil
 }
 
-// ListContents reads an archive and returns its file list.
-func (m *BackupManager) ListContents(backupFile, password string) ([]FileMetadata, error) {
-	reader, err := m.getReaderPipe(backupFile, password)
-	if err != nil {
-		return nil, err
-	}
-	// if reader is an io.Closer, we should close it.
-	if closer, ok := reader.(io.Closer); ok {
-		defer closer.Close()
-	}
+// Restore - 解密并解压缩
+func (m *BackupManager) Restore(backupFile, restoreDir, password string) error {
+	m.emitProgress("正在准备恢复...", 0, 0)
 
-	archiveReader := NewArchiveReader(reader)
-	var contents []FileMetadata
-
-	for {
-		meta, err := archiveReader.NextEntry()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return nil, err
-		}
-		contents = append(contents, *meta)
-
-		// We must consume the file's data to advance the reader to the next header
-		if meta.Size > 0 {
-			if _, err := io.CopyN(io.Discard, archiveReader.r, meta.Size); err != nil {
-				return nil, err
-			}
-		}
-	}
-	return contents, nil
-}
-
-// Restore has been updated for selective restore.
-func (m *BackupManager) Restore(backupFile, restoreDir, password string, filesToRestore []string) error {
 	reader, err := m.getReaderPipe(backupFile, password)
 	if err != nil {
 		return err
 	}
-	if closer, ok := reader.(io.Closer); ok {
-		defer closer.Close()
-	}
+	defer reader.Close()
 
 	archiveReader := NewArchiveReader(reader)
-	return m.runRestore(archiveReader, restoreDir, filesToRestore)
+	return m.runRestore(archiveReader, restoreDir)
 }
 
-func (m *BackupManager) runRestore(archiveReader *ArchiveReader, restoreDir string, filesToRestore []string) error {
-	restoreSet := make(map[string]bool)
-	for _, f := range filesToRestore {
-		restoreSet[filepath.ToSlash(f)] = true
-	}
-	restoreAll := len(filesToRestore) == 0
+// runRestore 并行、分块恢复文件
+func (m *BackupManager) runRestore(archiveReader *ArchiveReader, restoreDir string) error {
+	m.emitProgress("正在扫描备份文件...", 0, 0)
 
 	jobsChan := make(chan func(), restoreWorkers)
 	errChan := make(chan error, 1)
 	var wg sync.WaitGroup
+	processedEntries := 0
 
 	for i := 0; i < restoreWorkers; i++ {
 		wg.Add(1)
@@ -341,12 +334,6 @@ func (m *BackupManager) runRestore(archiveReader *ArchiveReader, restoreDir stri
 	producerErr := func() error {
 		defer close(jobsChan)
 		buffer := make([]byte, copyBufferSize)
-
-		processedCount := 0
-		totalToProcess := len(filesToRestore)
-		if totalToProcess == 0 {
-			totalToProcess = 1 // Avoid division by zero, will be updated later
-		}
 
 		for {
 			select {
@@ -363,21 +350,12 @@ func (m *BackupManager) runRestore(archiveReader *ArchiveReader, restoreDir stri
 				return fmt.Errorf("failed to read next archive entry: %w", err)
 			}
 
-			// Selective restore check
-			shouldRestore := restoreAll || restoreSet[meta.Path]
+			// 更新进度
+			processedEntries++
+			m.emitProgress("正在恢复文件...", processedEntries, 0) // 0表示未知总数
 
-			if !shouldRestore {
-				if meta.Size > 0 {
-					if _, err := io.CopyN(io.Discard, archiveReader.r, meta.Size); err != nil {
-						return fmt.Errorf("failed to discard data for %s: %w", meta.Path, err)
-					}
-				}
-				continue
-			}
-
-			processedCount++
-			m.emitProgress(fmt.Sprintf("Extracting: %s", meta.Path), processedCount, totalToProcess)
-
+			// No more selective restore, always process the entry
+			m.emitLog(fmt.Sprintf("正在提取: %s", meta.Path))
 			destPath := filepath.Join(restoreDir, meta.Path)
 
 			switch {
@@ -425,12 +403,15 @@ func (m *BackupManager) runRestore(archiveReader *ArchiveReader, restoreDir stri
 	if err := <-errChan; err != nil {
 		return err
 	}
+
+	m.emitProgress("恢复完成", processedEntries, processedEntries)
 	return nil
 }
 
 func (m *BackupManager) createDirOrLink(meta *FileMetadata, destPath string) error {
 	if _, err := os.Lstat(destPath); err == nil {
-		// Conflict exists, but we handle it for files only. For dirs/links, we might just proceed.
+		// TODO
+		// 文件夹冲突处理
 	}
 
 	if meta.IsLink {
