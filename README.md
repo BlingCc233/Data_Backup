@@ -1,11 +1,11 @@
 # CcDataBak - 跨平台高速加密备份工具
 
->> UESTC 软件开发综合实验
+> UESTC 软件开发综合实验
 
 ## 声明
 
 > [!NOTE]\
-> 22级大三下实验，同届请勿1:1copy
+> 22级大四上实验，同届请勿1:1copy
 
 <br/>
 
@@ -39,7 +39,7 @@
 *   **🎨 丰富且直观的筛选器**
    *   **按规则包含/排除**：通过通配符 (`*`, `?`) 或正则表达式轻松定义需要备份或忽略的文件/文件夹。 例如，`*.log` 可以排除所有日志文件。
    *   **按文件属性筛选**：根据文件大小、修改日期等属性进行精细筛选。例如，只备份过去7天内修改过的，且小于 100MB 的文件。
-   *   **模板化筛选**：内置常用筛选模板（如“代码项目”、“文档”、“照片”），一键应用，省时省力。
+   *   **TODO 模板化筛选**：内置常用筛选模板（如“代码项目”、“文档”、“照片”），一键应用，省时省力。
 
 *   **🖼️ 美观易用的 GUI**
    *   **现代化界面**：基于 Vue.js 3 和精美 UI 库打造，提供流畅、直观的用户体验。
@@ -54,16 +54,16 @@
     <td align="center"><strong>新建备份任务 (深色模式)</strong></td>
   </tr>
   <tr>
-    <td><img src="https://place-hold.it/400x300/f1faee/1d3557?text=主界面截图" alt="主界面截图"></td>
-    <td><img src="https://place-hold.it/400x300/1d3557/f1faee?text=新建任务截图" alt="新建任务截图"></td>
+    <td><img src="https://place-hold.it/400x300/f1faee/1d3557" alt="主界面截图"></td>
+    <td><img src="https://place-hold.it/400x300/1d3557/f1faee" alt="新建任务截图"></td>
   </tr>
   <tr>
     <td align="center"><strong>高级筛选器设置</strong></td>
     <td align="center"><strong>备份进度详情</strong></td>
   </tr>
   <tr>
-    <td><img src="https://place-hold.it/400x300/e9c46a/264653?text=筛选器截图" alt="筛选器截图"></td>
-    <td><img src="https://place-hold.it/400x300/2a9d8f/e9c46a?text=进度详情截图" alt="进度详情截图"></td>
+    <td><img src="https://place-hold.it/400x300/e9c46a/264653" alt="筛选器截图"></td>
+    <td><img src="https://place-hold.it/400x300/2a9d8f/e9c46a" alt="进度详情截图"></td>
   </tr>
 </table>
 
@@ -73,7 +73,7 @@
 *   **后端**: Go (Golang)
 *   **GUI 框架**: Wails v2
 *   **前端**: Vue.js 3
-*   **UI 组件库**: Element Plus / Naive UI (请根据您的选择填写)
+*   **UI 组件库**: Element Plus / Naive UI
 *   **数据库**: SQLite (用于存储配置和任务历史)
 
 ## 🚀 安装与启动
@@ -114,7 +114,7 @@
 
 ## 📖 使用说明
 
-1.  打开 TitanSync 应用程序。
+1.  打开 CcDataBak 应用程序。
 2.  点击“新建备份任务”按钮。
 3.  **选择源**：选择您想要备份的文件夹。
 4.  **配置筛选器**：(可选) 添加包含或排除规则，例如 `*.tmp` 来排除临时文件。
@@ -149,19 +149,13 @@
 
 ## TODO2
 1. 完善筛选器 (core/filters.go): 在 ShouldInclude 函数中，根据 FilterConfig 的字段（路径、大小、时间等）添加详细的 if/else 判断逻辑。
-
 2. 实现服务与定时任务 (app.go):
-
    1. 引入 github.com/kardianos/service 来处理跨平台的服务注册。
    2. 引入 github.com/robfig/cron/v3 来解析 cron 表达式并调度备份任务。在 main 函数或 App 结构体中启动一个 cron 调度器。
-
 3. 实现网络备份 (core/network.go):
-
    1. 为 S3, FTP 等创建具体的 Uploader 实现。例如，S3Uploader 会使用 AWS Go SDK。
    2. 在 BackupManager 中，检查目标路径是否是 URL，如果是，则创建一个内存 pipe，ArchiveWriter 写入 pipe，网络上传器从 pipe 读取并上传。
-
 4. 完善前端 UI:
-
    1. 添加用于配置筛选器、加密选项、定时任务的 UI 组件。
    2. 将这些配置项通过 v-model 绑定到数据对象，并在调用 Go 函数时传递。
    3. 使用图表库展示备份历史或统计信息。
