@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -28,6 +29,13 @@ type App struct {
 	requestIDCounter int64
 }
 
+// Profile defines the structure for a backup profile.
+type Profile struct {
+	ID    int    `json:"id"`
+	Name  string `json:"name"`
+	Paths string `json:"paths"` // Newline-separated paths
+}
+
 func NewApp() *App {
 	return &App{
 		conflictRequests: make(map[string]*conflictRequest),
@@ -41,12 +49,60 @@ func (a *App) startup(ctx context.Context) {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
 	a.db = db
+
+	// Create default profiles after DB initialization
+	if err := a.createDefaultProfiles(); err != nil {
+		log.Printf("Warning: Could not create default profiles: %v", err)
+	}
 }
 
 func (a *App) shutdown(ctx context.Context) {
 	if a.db != nil {
 		a.db.Close()
 	}
+}
+
+// createDefaultProfiles populates the database with default backup profiles for the current OS.
+func (a *App) createDefaultProfiles() error {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("could not get user home directory: %w", err)
+	}
+
+	profiles := make(map[string][]string)
+
+	switch goruntime.GOOS {
+	case "windows":
+		profiles["文档"] = []string{filepath.Join(homeDir, "Documents")}
+		profiles["照片"] = []string{filepath.Join(homeDir, "Pictures")}
+	case "darwin": // macOS
+		profiles["文档"] = []string{filepath.Join(homeDir, "Documents")}
+		profiles["照片"] = []string{filepath.Join(homeDir, "Pictures")}
+	default: // Linux and others
+		profiles["文档"] = []string{filepath.Join(homeDir, "Documents")}
+		profiles["照片"] = []string{filepath.Join(homeDir, "Pictures")}
+	}
+
+	tx, err := a.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() // Rollback on error
+
+	stmt, err := tx.Prepare("INSERT OR IGNORE INTO profiles(name, paths) VALUES(?, ?)")
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for name, paths := range profiles {
+		pathsStr := strings.Join(paths, "\n")
+		if _, err := stmt.Exec(name, pathsStr); err != nil {
+			return fmt.Errorf("failed to insert profile '%s': %w", name, err)
+		}
+	}
+
+	return tx.Commit()
 }
 
 // --- Dialogs ---
@@ -385,4 +441,56 @@ func (a *App) ListDirectory(path string) ([]FileInfo, error) {
 		})
 	}
 	return results, nil
+}
+
+// --- Profile Functions ---
+
+// GetProfiles retrieves all saved backup profiles.
+func (a *App) GetProfiles() ([]Profile, error) {
+	rows, err := a.db.Query("SELECT id, name, paths FROM profiles ORDER BY name ASC")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var profiles []Profile
+	for rows.Next() {
+		var p Profile
+		if err := rows.Scan(&p.ID, &p.Name, &p.Paths); err != nil {
+			return nil, err
+		}
+		profiles = append(profiles, p)
+	}
+	return profiles, nil
+}
+
+// CreateProfile saves a new backup profile.
+func (a *App) CreateProfile(name string, paths []string) (Profile, error) {
+	if name == "" {
+		return Profile{}, errors.New("profile name cannot be empty")
+	}
+	if len(paths) == 0 {
+		return Profile{}, errors.New("profile must have at least one path")
+	}
+
+	pathsStr := strings.Join(paths, "\n")
+
+	stmt, err := a.db.Prepare("INSERT INTO profiles(name, paths) VALUES(?, ?)")
+	if err != nil {
+		return Profile{}, err
+	}
+	defer stmt.Close()
+
+	res, err := stmt.Exec(name, pathsStr)
+	if err != nil {
+		// This could be a UNIQUE constraint violation, which is a common error
+		return Profile{}, fmt.Errorf("failed to execute insert for profile '%s': %w", name, err)
+	}
+
+	id, err := res.LastInsertId()
+	if err != nil {
+		return Profile{}, err
+	}
+
+	return Profile{ID: int(id), Name: name, Paths: pathsStr}, nil
 }

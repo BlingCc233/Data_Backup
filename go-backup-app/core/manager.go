@@ -40,7 +40,7 @@ func NewBackupManager(ctx context.Context) *BackupManager {
 const (
 	backupWorkers  = 8
 	restoreWorkers = 8
-	copyBufferSize = 32 * 1024
+	copyBufferSize = 256 * 1024
 )
 
 func (m *BackupManager) emitLog(message string) {

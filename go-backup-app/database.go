@@ -27,8 +27,8 @@ func InitializeDatabase(ctx context.Context) (*sql.DB, error) {
 		return nil, err
 	}
 
-	// Create table if it doesn't exist
-	sqlStmt := `
+	// Create backups table if it doesn't exist
+	sqlStmtBackups := `
 	CREATE TABLE IF NOT EXISTS backups (
 		id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
 		file_name TEXT,
@@ -37,8 +37,23 @@ func InitializeDatabase(ctx context.Context) (*sql.DB, error) {
 		created_at DATETIME
 	);
 	`
-	_, err = db.Exec(sqlStmt)
+	_, err = db.Exec(sqlStmtBackups)
 	if err != nil {
+		db.Close()
+		return nil, err
+	}
+
+	// Create profiles table if it doesn't exist
+	sqlStmtProfiles := `
+    CREATE TABLE IF NOT EXISTS profiles (
+        id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE,
+        paths TEXT NOT NULL
+    );
+    `
+	_, err = db.Exec(sqlStmtProfiles)
+	if err != nil {
+		db.Close()
 		return nil, err
 	}
 

@@ -131,8 +131,11 @@ var chunkMagic = []byte("HCHK")   // 标识每个块
 const (
 	// 定义压缩块的大小
 	huffmanChunkSize = 256 * 1024 // 256 KB
+)
+
+var (
 	// 定义用于压缩的 worker 数量
-	huffmanCompressionWorkers = 4
+	huffmanCompressionWorkers = runtime.NumCPU()
 )
 
 // huffmanJob 包含一个待压缩的数据块

@@ -6,7 +6,6 @@
         <h1 class="home-title">CcBackup</h1>
         <div class="home-actions">
           <div class="action-card" @click="navigateTo('backup')">
-            <!--            <div class="icon">⚡</div>-->
             <div class="icon">
               <svg height="4rem" width="4rem" version="1.1" id="Layer_1" xmlns="http://www.w3.org/2000/svg"
                    xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 511.998 511.998" xml:space="preserve"
