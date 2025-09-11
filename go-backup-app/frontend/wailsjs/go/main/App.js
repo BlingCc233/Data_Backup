@@ -6,12 +6,20 @@ export function AddBackupRecord(arg1, arg2, arg3) {
   return window['go']['main']['App']['AddBackupRecord'](arg1, arg2, arg3);
 }
 
+export function CreateProfile(arg1, arg2) {
+  return window['go']['main']['App']['CreateProfile'](arg1, arg2);
+}
+
 export function GetBackupHistory() {
   return window['go']['main']['App']['GetBackupHistory']();
 }
 
 export function GetFileMetadata(arg1) {
   return window['go']['main']['App']['GetFileMetadata'](arg1);
+}
+
+export function GetProfiles() {
+  return window['go']['main']['App']['GetProfiles']();
 }
 
 export function ListDirectory(arg1) {

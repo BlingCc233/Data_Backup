@@ -4,9 +4,13 @@ import {main} from '../models';
 
 export function AddBackupRecord(arg1:string,arg2:string,arg3:Array<string>):Promise<void>;
 
+export function CreateProfile(arg1:string,arg2:Array<string>):Promise<main.Profile>;
+
 export function GetBackupHistory():Promise<Array<main.BackupRecord>>;
 
 export function GetFileMetadata(arg1:Array<string>):Promise<Array<main.FileInfo>>;
+
+export function GetProfiles():Promise<Array<main.Profile>>;
 
 export function ListDirectory(arg1:string):Promise<Array<main.FileInfo>>;
 

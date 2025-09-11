@@ -173,6 +173,22 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class Profile {
+	    id: number;
+	    name: string;
+	    paths: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Profile(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.paths = source["paths"];
+	    }
+	}
 	export class RestoreConfig {
 	    backupFile: string;
 	    restoreDir: string;

@@ -75,7 +75,26 @@
         <div v-if="backupStep === 1">
           <div class="card">
             <h3>Step 1: 选择要备份的文件或文件夹</h3>
-            <p class="description">您可以多选文件或文件夹。选择后，它们将显示在下面的列表中，您可以进一步筛选。</p>
+
+            <!-- Profile Section -->
+            <div class="profile-section">
+              <h4 class="profile-title">通过档案快速选择</h4>
+              <p class="description">选择一个预设或自定义的档案来快速添加常用文件夹。</p>
+              <div class="profile-actions">
+                <div class="profile-buttons">
+                  <button v-for="profile in profiles" :key="profile.id" @click="applyProfile(profile)"
+                          class="profile-btn">
+                    {{ profile.name }}
+                  </button>
+                </div>
+                <button @click="openSaveProfileModal" :disabled="selectedBackupFileCount === 0">
+                  将当前选择保存为档案
+                </button>
+              </div>
+            </div>
+            <hr class="card-divider">
+
+            <p class="description">或者，您可以手动多选文件或文件夹。选择后，它们将显示在下面的列表中。</p>
             <div class="action-bar-left">
               <button @click="selectBackupSources('files')">选择文件</button>
               <button @click="selectBackupSources('dirs')">选择文件夹</button>
@@ -397,6 +416,28 @@
       </div>
     </div>
 
+    <!-- Profile Save Modal -->
+    <div v-if="isProfileModalVisible" class="modal-overlay">
+      <div class="modal-content">
+        <h3>保存为新档案</h3>
+        <p>为当前选择的 {{ selectedBackupFileCount }} 个项目输入一个档案名称。</p>
+        <div class="input-group modal-input">
+          <label>档案名称:</label>
+          <input
+              type="text"
+              v-model="newProfileName"
+              @keyup.enter="confirmSaveProfile"
+              placeholder="例如: '我的工作文档'"
+              ref="profileNameInputRef"
+          />
+        </div>
+        <div class="modal-actions">
+          <button @click="closeSaveProfileModal">取消</button>
+          <button class="primary" @click="confirmSaveProfile" :disabled="!newProfileName.trim()">保存</button>
+        </div>
+      </div>
+    </div>
+
   </div>
 
 </template>
@@ -404,8 +445,10 @@
 <script setup>
 import {computed, nextTick, onMounted, reactive, ref} from 'vue';
 import {
+  CreateProfile,
   GetBackupHistory,
   GetFileMetadata,
+  GetProfiles,
   ListDirectory,
   OpenInExplorer,
   ResolveConflict,
@@ -434,6 +477,7 @@ onMounted(() => {
   });
 
   fetchBackupHistory();
+  fetchProfiles();
 });
 
 
@@ -491,11 +535,92 @@ const currentViewItems = ref([]); // Items currently in the table
 const isBrowsing = ref(false); // Loading indicator state
 const fileSelectionMap = reactive(new Map()); // Master map for selection state { path: boolean }
 
+// --- Profile State & Logic ---
+const profiles = ref([]);
+const isProfileModalVisible = ref(false);
+const newProfileName = ref('');
+const profileNameInputRef = ref(null);
+
+async function fetchProfiles() {
+  try {
+    profiles.value = await GetProfiles();
+  } catch (e) {
+    statusMessage.value = `无法加载档案: ${e}`;
+  }
+}
+
+async function applyProfile(profile) {
+  // Clear existing selections first
+  backupFiles.value = [];
+  fileSelectionMap.clear();
+  pathStack.value = [{name: '根目录', path: 'root'}];
+  currentViewItems.value = [];
+
+  const paths = profile.paths.split('\n').filter(p => p.trim() !== '');
+  if (paths.length > 0) {
+    try {
+      statusMessage.value = `正在从档案 '${profile.name}' 加载...`;
+      const metadata = await GetFileMetadata(paths);
+      metadata.forEach(m => {
+        if (!backupFiles.value.some(f => f.path === m.path)) {
+          backupFiles.value.push({...m, selected: true});
+        }
+        fileSelectionMap.set(m.path, true);
+      });
+      await loadDirectoryView('root');
+    } catch (error) {
+      statusMessage.value = `从档案加载时出错: ${error}`;
+    }
+  }
+}
+
+function openSaveProfileModal() {
+  isProfileModalVisible.value = true;
+  nextTick(() => {
+    profileNameInputRef.value?.focus();
+  });
+}
+
+function closeSaveProfileModal() {
+  isProfileModalVisible.value = false;
+  newProfileName.value = '';
+}
+
+async function confirmSaveProfile() {
+  const name = newProfileName.value.trim();
+  if (!name) {
+    statusMessage.value = "档案名称不能为空。";
+    return;
+  }
+  const selectedPaths = Array.from(fileSelectionMap.entries())
+      .filter(([, selected]) => selected)
+      .map(([path]) => path);
+
+  if (selectedPaths.length === 0) {
+    statusMessage.value = "没有选择任何项目来保存。";
+    return;
+  }
+
+  try {
+    await CreateProfile(name, selectedPaths);
+    statusMessage.value = `档案 '${name}' 已保存。`;
+    await fetchProfiles(); // Refresh the list of profiles
+    closeSaveProfileModal();
+  } catch (error) {
+    statusMessage.value = `保存档案失败: ${error}`;
+    successMessage.value = `保存档案失败: ${error}`;
+    showErrorModal.value = true;
+  }
+}
+
+
 function resetBackupState() {
   backupStep.value = 1;
   backupFiles.value = [];
   backupDest.value = '';
   inProgress.value = false;
+  isProfileModalVisible.value = false;
+  newProfileName.value = '';
 
   pathStack.value = [{name: '根目录', path: 'root'}];
   currentViewItems.value = [];
@@ -1743,5 +1868,54 @@ input[type="checkbox"].toggle:checked::before {
   text-align: center;
   padding: 2rem;
   color: #a0aec0;
+}
+
+/* Basic styles for the new profile section */
+.profile-section {
+  margin-top: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.profile-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+
+.profile-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.profile-buttons {
+  display: flex;
+  gap: 2rem;
+  flex-wrap: wrap;
+}
+
+.profile-buttons button {
+  padding: 0 0.6rem 0.4rem 0.6rem;
+  background-color: var(--sidebar-bg);
+  border: none;
+  border-bottom: 1px solid #9ed7f0 !important;
+  color: var(--text-color);
+  border-radius: 0px;
+  cursor: pointer;
+  font-size: 1rem;
+  transition: all 0.2s;
+}
+
+.profile-buttons button:hover {
+  border-bottom: 1px solid #7393d5 !important;
+}
+
+.card-divider {
+  border: none;
+  height: 1px;
+  background-color: #e2e8f0;
+  margin: 1.5rem 0;
 }
 </style>
