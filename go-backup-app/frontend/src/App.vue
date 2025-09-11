@@ -2,16 +2,43 @@
   <div id="app-container">
     <!-- Main View: Home Screen -->
     <main class="main-content" v-if="currentScreen === 'home'">
-      <div class="home-screen" >
+      <div class="home-screen">
         <h1 class="home-title">CcBackup</h1>
         <div class="home-actions">
           <div class="action-card" @click="navigateTo('backup')">
-            <div class="icon">⚡</div>
+            <!--            <div class="icon">⚡</div>-->
+            <div class="icon">
+              <svg height="4rem" width="4rem" version="1.1" id="Layer_1" xmlns="http://www.w3.org/2000/svg"
+                   xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 511.998 511.998" xml:space="preserve"
+                   fill="#000000"><g id="SVGRepo_bgCarrier" stroke-width="0"></g>
+                <g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g>
+                <g id="SVGRepo_iconCarrier"> <g> <polygon style="fill:#CFF09E;"
+                                                          points="351.38,16.284 347.586,16.284 347.586,122.034 464.78,122.034 "></polygon>
+                  <polygon style="fill:#CFF09E;"
+                           points="44.666,208.782 44.666,306.488 184.933,306.488 184.933,370.87 326.573,255.999 184.933,141.13 184.933,208.782 "></polygon> </g>
+                  <g> <path style="fill:#507C5C;"
+                            d="M467.331,202.728c-8.994,0-16.284,7.29-16.284,16.284v260.42H105.826v-156.66h62.825v48.098 c0,6.279,3.61,12,9.279,14.7c2.231,1.063,4.623,1.584,7.002,1.584c3.667,0,7.302-1.238,10.259-3.636l141.64-114.871 c3.812-3.091,6.027-7.738,6.027-12.648c0-4.91-2.215-9.555-6.027-12.648l-141.64-114.871c-4.877-3.955-11.593-4.753-17.263-2.052 c-5.668,2.702-9.279,8.42-9.279,14.7v51.368H44.668c-8.994,0-16.284,7.29-16.284,16.284v97.706c0,8.994,7.29,16.284,16.284,16.284 h28.59v172.944c0,8.994,7.29,16.284,16.284,16.284h377.789c8.994,0,16.284-7.29,16.284-16.284V219.012 C483.615,210.018,476.324,202.728,467.331,202.728z M60.952,225.066h123.983c8.994,0,16.284-7.29,16.284-16.284v-33.48 l99.503,80.697l-99.503,80.697v-30.208c0-8.994-7.29-16.284-16.284-16.284H60.952V225.066z"></path>
+                    <path style="fill:#507C5C;"
+                          d="M89.542,138.318c8.994,0,16.284-7.29,16.284-16.284V32.568h225.476v89.466 c0,8.994,7.29,16.284,16.284,16.284H464.78c6.689,0,12.698-4.092,15.151-10.316c2.452-6.224,0.848-13.315-4.045-17.878 L362.488,4.376c-0.124-0.116-0.259-0.217-0.386-0.327c-0.192-0.168-0.383-0.335-0.583-0.493c-0.2-0.16-0.405-0.309-0.612-0.458 c-0.217-0.156-0.432-0.311-0.656-0.458c-0.199-0.129-0.402-0.248-0.606-0.368c-0.246-0.147-0.493-0.29-0.747-0.423 c-0.191-0.099-0.386-0.187-0.58-0.28c-0.275-0.13-0.55-0.261-0.835-0.375c-0.189-0.077-0.383-0.14-0.575-0.21 c-0.295-0.106-0.588-0.213-0.889-0.303c-0.207-0.062-0.417-0.107-0.625-0.161c-0.291-0.073-0.58-0.153-0.878-0.21 c-0.267-0.052-0.537-0.085-0.806-0.124c-0.246-0.034-0.489-0.081-0.738-0.104C352.445,0.029,351.914,0,351.38,0h-3.794H89.542 c-8.994,0-16.284,7.29-16.284,16.284v105.75C73.258,131.028,80.548,138.318,89.542,138.318z M363.87,105.75V50.197l59.572,55.553 H363.87z"></path> </g> </g></svg>
+            </div>
             <h2>备份</h2>
             <p>创建新的数据备份</p>
           </div>
           <div class="action-card" @click="navigateTo('restore')">
-            <div class="icon">🔄</div>
+            <div class="icon">
+              <svg height="4rem" width="4rem" version="1.1" id="Layer_1" xmlns="http://www.w3.org/2000/svg"
+                   xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 512.002 512.002" xml:space="preserve"
+                   fill="#000000"><g id="SVGRepo_bgCarrier" stroke-width="0"></g>
+                <g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g>
+                <g id="SVGRepo_iconCarrier"> <g> <polygon style="fill:#9ed7f0;"
+                                                          points="351.384,16.284 347.589,16.284 347.589,122.034 464.784,122.034 "></polygon>
+                  <polygon style="fill:#9ed7f0;"
+                           points="326.576,303.218 326.576,205.512 186.309,205.512 186.309,141.13 44.669,255.999 186.309,370.87 186.309,303.218 "></polygon> </g>
+                  <g> <path style="fill:#50597c;"
+                            d="M467.334,202.728c-8.994,0-16.284,7.29-16.284,16.284v260.42H105.829V326.566l70.225,56.953 c2.957,2.399,6.592,3.636,10.259,3.636c2.379,0,4.773-0.521,7.002-1.584c5.668-2.702,9.279-8.42,9.279-14.7v-51.368h123.983 c8.994,0,16.284-7.29,16.284-16.284v-97.706c0-8.994-7.29-16.284-16.284-16.284H202.593v-48.1c0-6.279-3.61-12-9.279-14.7 c-5.665-2.702-12.384-1.902-17.263,2.052L34.412,243.353c-3.812,3.091-6.027,7.738-6.027,12.648c0,4.91,2.215,9.555,6.027,12.648 l38.847,31.505v195.564c0,8.994,7.29,16.284,16.284,16.284h377.789c8.994,0,16.284-7.29,16.284-16.284V219.012 C483.618,210.018,476.327,202.728,467.334,202.728z M170.027,175.302v30.208c0,8.994,7.29,16.284,16.284,16.284h123.983v65.138 H186.311c-8.994,0-16.284,7.29-16.284,16.284v33.48l-99.503-80.697L170.027,175.302z"></path>
+                    <path style="fill:#50597c;"
+                          d="M89.545,138.318c8.994,0,16.284-7.29,16.284-16.284V32.568h225.476v89.466 c0,8.994,7.29,16.284,16.284,16.284h117.194c6.689,0,12.698-4.092,15.151-10.316c2.452-6.224,0.848-13.315-4.045-17.878 L362.491,4.376c-0.124-0.116-0.259-0.217-0.386-0.327c-0.192-0.168-0.383-0.335-0.583-0.493c-0.2-0.16-0.405-0.309-0.612-0.458 c-0.217-0.156-0.432-0.311-0.656-0.458c-0.199-0.129-0.402-0.248-0.606-0.368c-0.246-0.147-0.493-0.29-0.747-0.423 c-0.191-0.099-0.386-0.187-0.58-0.28c-0.275-0.13-0.55-0.261-0.835-0.375c-0.189-0.077-0.383-0.14-0.575-0.21 c-0.295-0.106-0.588-0.213-0.889-0.303c-0.207-0.062-0.417-0.107-0.625-0.161c-0.292-0.073-0.58-0.153-0.878-0.21 c-0.267-0.052-0.537-0.085-0.806-0.124c-0.246-0.034-0.489-0.081-0.738-0.104C352.448,0.029,351.918,0,351.384,0h-3.794H89.545 c-8.994,0-16.284,7.29-16.284,16.284v105.75C73.261,131.028,80.551,138.318,89.545,138.318z M363.873,105.75V50.197l59.572,55.553 H363.873z"></path> </g> </g></svg>
+            </div>
             <h2>恢复</h2>
             <p>从备份文件中恢复数据</p>
           </div>
@@ -60,7 +87,8 @@
             <div class="file-list-header">
               <!-- Breadcrumbs -->
               <div class="breadcrumbs">
-                <span v-for="(part, index) in pathStack" :key="part.path" @click="navigateToBreadcrumb(index)" class="breadcrumb-item">
+                <span v-for="(part, index) in pathStack" :key="part.path" @click="navigateToBreadcrumb(index)"
+                      class="breadcrumb-item">
                   {{ part.name }}
                 </span>
               </div>
@@ -75,10 +103,15 @@
             <table class="file-table" :class="{ 'is-loading': isBrowsing }">
               <thead>
               <tr>
-                <th class="col-checkbox"><input type="checkbox" @change="toggleSelectAllCurrentView" :checked="allCurrentViewFilesSelected" :indeterminate="isCurrentViewIndeterminate"></th>
-                <th @click="sortCurrentViewItems('name')" class="sortable">名称 <span v-if="sort.key === 'name'">{{ sort.order === 'asc' ? '▲' : '▼' }}</span></th>
-                <th @click="sortCurrentViewItems('size')" class="sortable">大小 <span v-if="sort.key === 'size'">{{ sort.order === 'asc' ? '▲' : '▼' }}</span></th>
-                <th @click="sortCurrentViewItems('modTime')" class="sortable">修改时间 <span v-if="sort.key === 'modTime'">{{ sort.order === 'asc' ? '▲' : '▼' }}</span></th>
+                <th class="col-checkbox"><input type="checkbox" @change="toggleSelectAllCurrentView"
+                                                :checked="allCurrentViewFilesSelected"
+                                                :indeterminate="isCurrentViewIndeterminate"></th>
+                <th @click="sortCurrentViewItems('name')" class="sortable">名称 <span
+                    v-if="sort.key === 'name'">{{ sort.order === 'asc' ? '▲' : '▼' }}</span></th>
+                <th @click="sortCurrentViewItems('size')" class="sortable">大小 <span
+                    v-if="sort.key === 'size'">{{ sort.order === 'asc' ? '▲' : '▼' }}</span></th>
+                <th @click="sortCurrentViewItems('modTime')" class="sortable">修改时间 <span
+                    v-if="sort.key === 'modTime'">{{ sort.order === 'asc' ? '▲' : '▼' }}</span></th>
                 <th>权限</th>
               </tr>
               </thead>
@@ -134,7 +167,10 @@
                 <div class="size-input">
                   <input type="number" v-model.number="filters.minSizeValue" min="0">
                   <select v-model="filters.minSizeUnit">
-                    <option>Bytes</option><option>KB</option><option>MB</option><option>GB</option>
+                    <option>Bytes</option>
+                    <option>KB</option>
+                    <option>MB</option>
+                    <option>GB</option>
                   </select>
                 </div>
               </div>
@@ -143,7 +179,10 @@
                 <div class="size-input">
                   <input type="number" v-model.number="filters.maxSizeValue" min="0">
                   <select v-model="filters.maxSizeUnit">
-                    <option>Bytes</option><option>KB</option><option>MB</option><option>GB</option>
+                    <option>Bytes</option>
+                    <option>KB</option>
+                    <option>MB</option>
+                    <option>GB</option>
                   </select>
                 </div>
               </div>
@@ -180,7 +219,7 @@
                 </p>
                 <div class="input-group">
                   <label>密码:</label>
-                  <input type="password" v-model="encryption.password" placeholder="输入一个强密码" />
+                  <input type="password" v-model="encryption.password" placeholder="输入一个强密码"/>
                 </div>
                 <div class="input-group">
                   <label>算法:</label>
@@ -195,13 +234,14 @@
               <h3>目标位置</h3>
               <div class="input-group">
                 <label>备份到:</label>
-                <input v-model="backupDest" readonly type="text" placeholder="选择一个目录来保存备份文件" />
+                <input v-model="backupDest" readonly type="text" placeholder="选择一个目录来保存备份文件"/>
                 <button @click="selectDestDir">选择</button>
               </div>
             </div>
             <div class="action-bar">
               <button @click="backupStep = 2">上一步</button>
-              <button class="primary" @click="doBackup" :disabled="!backupDest || (encryption.enabled && !encryption.password)">
+              <button class="primary" @click="doBackup"
+                      :disabled="!backupDest || (encryption.enabled && !encryption.password)">
                 开始备份
               </button>
             </div>
@@ -256,12 +296,12 @@
             <h3>手动选择</h3>
             <div class="input-group">
               <label>备份文件:</label>
-              <input v-model="restoreFile" readonly type="text" placeholder="选择一个 .qbak 文件" />
+              <input v-model="restoreFile" readonly type="text" placeholder="选择一个 .qbak 文件"/>
               <button @click="selectRestoreFileManually">选择</button>
             </div>
             <div class="input-group">
               <label>恢复到目录:</label>
-              <input v-model="restoreDir" readonly type="text" placeholder="选择恢复文件的位置" />
+              <input v-model="restoreDir" readonly type="text" placeholder="选择恢复文件的位置"/>
               <button @click="selectRestoreDir">选择</button>
             </div>
           </div>
@@ -288,7 +328,7 @@
     </main>
 
     <!-- Global Log Section (only shown for backup) -->
-<!--    <div class="log-card-container" v-if="currentScreen === 'backup'">-->
+    <!--    <div class="log-card-container" v-if="currentScreen === 'backup'">-->
     <div class="log-card-container">
       <div class="log-card">
         <h3>日志输出</h3>
@@ -363,12 +403,20 @@
 </template>
 
 <script setup>
-import {ref, onMounted, reactive, computed, nextTick} from 'vue';
+import {computed, nextTick, onMounted, reactive, ref} from 'vue';
 import {
-  SelectFiles, SelectDirectory, GetFileMetadata, StartBackup, StopOperation,
-  GetBackupHistory, StartRestore, OpenInExplorer, ResolveConflict, ListDirectory
+  GetBackupHistory,
+  GetFileMetadata,
+  ListDirectory,
+  OpenInExplorer,
+  ResolveConflict,
+  SelectDirectory,
+  SelectFiles,
+  StartBackup,
+  StartRestore,
+  StopOperation
 } from '../wailsjs/go/main/App';
-import { EventsOn } from '../wailsjs/runtime/runtime';
+import {EventsOn} from '../wailsjs/runtime/runtime';
 
 onMounted(() => {
   EventsOn("log_message", (data) => {
@@ -395,7 +443,7 @@ const currentScreen = ref('home'); // 'home', 'backup', 'restore'
 const inProgress = ref(false);
 const statusMessage = ref('准备就绪。');
 const logMessages = ref([]);
-const progress = reactive({ value: 0, max: 100 });
+const progress = reactive({value: 0, max: 100});
 const isPasswordModalVisible = ref(false);
 const restorePasswordInput = ref('');
 const passwordInputRef = ref(null);
@@ -439,7 +487,7 @@ const filters = ref({
 });
 const encryption = reactive({enabled: false, password: '', algorithm: 'AES-256'});
 
-const pathStack = ref([{ name: '根目录', path: 'root' }]); // Breadcrumb stack
+const pathStack = ref([{name: '根目录', path: 'root'}]); // Breadcrumb stack
 const currentViewItems = ref([]); // Items currently in the table
 const isBrowsing = ref(false); // Loading indicator state
 const fileSelectionMap = reactive(new Map()); // Master map for selection state { path: boolean }
@@ -450,7 +498,7 @@ function resetBackupState() {
   backupDest.value = '';
   inProgress.value = false;
 
-  pathStack.value = [{ name: '根目录', path: 'root' }];
+  pathStack.value = [{name: '根目录', path: 'root'}];
   currentViewItems.value = [];
   fileSelectionMap.clear();
 
@@ -484,7 +532,7 @@ async function selectBackupSources(type) {
       metadata.forEach(m => {
         // Add to top-level list if not already there
         if (!backupFiles.value.some(f => f.path === m.path)) {
-          backupFiles.value.push({ ...m, selected: true });
+          backupFiles.value.push({...m, selected: true});
         }
         // Add to selection map
         fileSelectionMap.set(m.path, true);
@@ -526,7 +574,7 @@ async function loadDirectoryView(path) {
 }
 
 async function enterDirectory(dir) {
-  pathStack.value.push({ name: dir.name, path: dir.path });
+  pathStack.value.push({name: dir.name, path: dir.path});
   await loadDirectoryView(dir.path);
 }
 
@@ -616,9 +664,9 @@ function updateProgress() {
   if (!inProgress.value || progressStartTime.value === 0) return;
 
 
-  if(isConflictModalVisible.value){
+  if (isConflictModalVisible.value) {
     progress.value = progress.value;
-  }else {
+  } else {
     const elapsed = Date.now() - progressStartTime.value;
     progress.value = calculateLogProgress(elapsed);
   }
@@ -636,10 +684,10 @@ function updateProgress() {
     }
   }
 
-  if (currentScreen.value === 'restore'){
-    if (progress.value >= 44 && progressStage.value === 'decrypting'){
+  if (currentScreen.value === 'restore') {
+    if (progress.value >= 44 && progressStage.value === 'decrypting') {
       progressStage.value = 'decompressing';
-    } else if (progress.value >= 88 && progressStage.value === 'decompressing'){
+    } else if (progress.value >= 88 && progressStage.value === 'decompressing') {
       progressStage.value = 'restoring';
     }
   }
@@ -828,10 +876,9 @@ async function doRestore(password) {
     } else {
       statusMessage.value = `错误: ${error}`;
       showErrorModal.value = true;
-      if(cleanPassword !== '' && error.includes("EOF")){
+      if (cleanPassword !== '' && error.includes("EOF")) {
         successMessage.value = `密码错误请重试`;
-      }
-      else {
+      } else {
         successMessage.value = `${error}`;
       }
     }
@@ -901,7 +948,7 @@ function closeSuccessModal() {
   resetRestoreState();
 }
 
- function closeErrModal() {
+function closeErrModal() {
   showErrorModal.value = false;
   successMessage.value = '';
 }
@@ -1146,6 +1193,8 @@ textarea {
   padding: 0.75rem 1rem;
   text-align: left;
   border-bottom: 1px solid var(--border-color);
+  min-height: 2rem;
+  max-height: 3rem;
 }
 
 .file-table tbody tr:last-child td {
@@ -1175,15 +1224,16 @@ textarea {
   display: flex;
   align-items: center;
   gap: 0.75rem;
+  min-height: 3rem;
+  max-width: 15rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 
 .file-icon {
   font-size: 1.2rem;
-}
-
-.dir-hint {
-  color: var(--text-color-light);
-  margin-left: auto;
 }
 
 /* Backup History */
@@ -1514,6 +1564,7 @@ input[type="checkbox"].toggle:checked::before {
   margin: 1rem auto 2rem;
   padding: 0 1rem;
 }
+
 .step {
   display: flex;
   flex-direction: column;
@@ -1522,6 +1573,7 @@ input[type="checkbox"].toggle:checked::before {
   color: #a0aec0; /* Inactive color */
   transition: color 0.3s;
 }
+
 .step-circle {
   width: 32px;
   height: 32px;
@@ -1535,10 +1587,12 @@ input[type="checkbox"].toggle:checked::before {
   margin-bottom: 0.5rem;
   transition: background-color 0.3s, border-color 0.3s;
 }
+
 .step-title {
   font-size: 0.9rem;
   font-weight: 500;
 }
+
 .step-line {
   flex-grow: 1;
   height: 2px;
@@ -1547,21 +1601,26 @@ input[type="checkbox"].toggle:checked::before {
   transform: translateY(-16px); /* Align with the middle of the circles */
   transition: background-color 0.3s;
 }
+
 /* Active & Completed States */
 .step.active .step-circle {
   background-color: #4299e1; /* Active blue */
   border-color: #4299e1;
 }
+
 .step.active {
   color: #e2e8f0; /* Active text color */
 }
+
 .step.completed .step-circle {
   background-color: #48bb78; /* Completed green */
   border-color: #48bb78;
 }
+
 .step.completed {
   color: #c6f6d5; /* Completed text color */
 }
+
 .step-line.completed {
   background-color: #48bb78;
 }
@@ -1571,35 +1630,43 @@ input[type="checkbox"].toggle:checked::before {
   border-bottom: 1px solid #4a5568;
   transition: background-color 0.2s;
 }
+
 .history-item-wrapper:last-child {
   border-bottom: none;
 }
+
 .history-item {
   padding: 1rem;
   cursor: pointer;
 }
+
 .history-item:hover {
   background-color: rgba(255, 255, 255, 0.05);
 }
+
 .history-item-wrapper.expanded .history-item {
   background-color: #3b485b; /* A slightly different background when expanded */
 }
+
 .backup-details {
   background-color: #2d3748; /* Darker background for details */
   padding: 1rem 1.5rem;
   border-top: 1px solid #4a5568;
 }
+
 .backup-details h4 {
   margin-top: 0;
   margin-bottom: 0.75rem;
   color: #a0aec0;
   font-size: 0.9rem;
 }
+
 .backup-details ul {
   list-style-type: none;
   padding-left: 0;
   margin: 0;
 }
+
 .backup-details li {
   padding: 0.25rem 0;
   font-size: 0.85rem;
@@ -1614,31 +1681,38 @@ input[type="checkbox"].toggle:checked::before {
   margin-bottom: -1rem; /* Adjust to align with header */
   padding-bottom: 1rem;
 }
+
 .breadcrumb-item {
   color: #a0aec0;
   cursor: pointer;
   transition: color 0.2s;
 }
+
 .breadcrumb-item:hover {
   color: #63b3ed;
 }
+
 .breadcrumb-item::after {
   content: '>';
   margin: 0 0.5rem;
   color: #718096;
 }
+
 .breadcrumb-item:last-child {
   color: #e2e8f0;
   cursor: default;
 }
+
 .breadcrumb-item:last-child::after {
   content: '';
 }
+
 .dir-link {
   color: #63b3ed;
   cursor: pointer;
   text-decoration: none;
 }
+
 .dir-link:hover {
   text-decoration: underline;
 }
@@ -1646,6 +1720,7 @@ input[type="checkbox"].toggle:checked::before {
 .file-list-card {
   position: relative; /* Needed for loading overlay */
 }
+
 .loading-overlay {
   position: absolute;
   top: 50px; /* Below header */
@@ -1660,9 +1735,11 @@ input[type="checkbox"].toggle:checked::before {
   color: #e2e8f0;
   font-size: 1.2rem;
 }
+
 .file-table.is-loading tbody {
   opacity: 0.3;
 }
+
 .empty-dir-msg {
   text-align: center;
   padding: 2rem;
