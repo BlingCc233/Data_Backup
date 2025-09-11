@@ -16,7 +16,7 @@ type FileMetadata struct {
 	Size     int64       `json:"size"`     // 文件大小
 	Mode     os.FileMode `json:"mode"`     // 文件权限和模式
 	ModTime  time.Time   `json:"modTime"`  // 修改时间
-	IsDir    bool        `json:"isDir"`    // 是否是目录 (新增)
+	IsDir    bool        `json:"isDir"`    // 是否是目录
 	IsLink   bool        `json:"isLink"`   // 是否是符号链接
 	LinkDest string      `json:"linkDest"` // 符号链接目标
 }

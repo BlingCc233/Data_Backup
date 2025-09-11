@@ -91,7 +91,6 @@ jobs:
               "${{ env.ASSET_NAME }}" \
               "${APP_PATH}"
           else
-            # Windows 的逻辑保持不变
             mv "${{ env.BINARY_PATH}}$( [ "${{ matrix.os }}" == "windows-latest" ] && echo ".exe" )" "${{ env.ASSET_NAME }}"
           fi
 

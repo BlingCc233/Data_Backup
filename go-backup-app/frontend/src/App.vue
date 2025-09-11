@@ -26,8 +26,25 @@
         <h2 class="view-title">{{ viewTitle }}</h2>
       </div>
 
-      <!-- Backup View (Unchanged from previous revision, but included for completeness) -->
+      <!-- Backup View -->
       <div v-if="currentScreen === 'backup'" class="view">
+        <div class="stepper">
+          <div class="step" :class="{ active: backupStep === 1, completed: backupStep > 1 }">
+            <div class="step-circle">1</div>
+            <div class="step-title">选择项目</div>
+          </div>
+          <div class="step-line" :class="{ completed: backupStep > 1 }"></div>
+          <div class="step" :class="{ active: backupStep === 2, completed: backupStep > 2 }">
+            <div class="step-circle">2</div>
+            <div class="step-title">高级筛选</div>
+          </div>
+          <div class="step-line" :class="{ completed: backupStep > 2 }"></div>
+          <div class="step" :class="{ active: backupStep === 3 }">
+            <div class="step-circle">3</div>
+            <div class="step-title">加密与执行</div>
+          </div>
+        </div>
+
         <!-- Step 1: Select Paths & Files -->
         <div v-if="backupStep === 1">
           <div class="card">
@@ -41,30 +58,47 @@
 
           <div class="card file-list-card" v-if="backupFiles.length > 0">
             <div class="file-list-header">
-              <h3>已选择的项目</h3>
-              <span>共 {{ backupFiles.length }} 项</span>
+              <!-- Breadcrumbs -->
+              <div class="breadcrumbs">
+                <span v-for="(part, index) in pathStack" :key="part.path" @click="navigateToBreadcrumb(index)" class="breadcrumb-item">
+                  {{ part.name }}
+                </span>
+              </div>
+              <span>共 {{ selectedBackupFileCount }} 项已选</span>
             </div>
-            <table class="file-table">
+
+            <!-- Loading indicator -->
+            <div v-if="isBrowsing" class="loading-overlay">
+              <p>正在加载...</p>
+            </div>
+
+            <table class="file-table" :class="{ 'is-loading': isBrowsing }">
               <thead>
               <tr>
-                <th class="col-checkbox"><input type="checkbox" @change="toggleSelectAllBackupFiles" :checked="allBackupFilesSelected"></th>
-                <th @click="sortBackupFiles('name')" class="sortable">名称 <span v-if="sort.key === 'name'">{{ sort.order === 'asc' ? '▲' : '▼' }}</span></th>
-                <th @click="sortBackupFiles('size')" class="sortable">大小 <span v-if="sort.key === 'size'">{{ sort.order === 'asc' ? '▲' : '▼' }}</span></th>
-                <th @click="sortBackupFiles('modTime')" class="sortable">修改时间 <span v-if="sort.key === 'modTime'">{{ sort.order === 'asc' ? '▲' : '▼' }}</span></th>
+                <th class="col-checkbox"><input type="checkbox" @change="toggleSelectAllCurrentView" :checked="allCurrentViewFilesSelected" :indeterminate="isCurrentViewIndeterminate"></th>
+                <th @click="sortCurrentViewItems('name')" class="sortable">名称 <span v-if="sort.key === 'name'">{{ sort.order === 'asc' ? '▲' : '▼' }}</span></th>
+                <th @click="sortCurrentViewItems('size')" class="sortable">大小 <span v-if="sort.key === 'size'">{{ sort.order === 'asc' ? '▲' : '▼' }}</span></th>
+                <th @click="sortCurrentViewItems('modTime')" class="sortable">修改时间 <span v-if="sort.key === 'modTime'">{{ sort.order === 'asc' ? '▲' : '▼' }}</span></th>
                 <th>权限</th>
               </tr>
               </thead>
               <tbody>
-              <tr v-for="file in sortedBackupFiles" :key="file.path">
-                <td><input type="checkbox" v-model="file.selected"></td>
+              <!-- Iterating over sortedCurrentViewItems now -->
+              <tr v-for="file in sortedCurrentViewItems" :key="file.path">
+                <td><input type="checkbox" v-model="file.selected" @change="updateSelection(file)"></td>
                 <td class="col-name">
                   <span class="file-icon">{{ file.isDir ? '📁' : '📄' }}</span>
-                  {{ file.name }}
-                  <small v-if="file.isDir" class="dir-hint">(点击文件夹可浏览，但此处仅作展示)</small>
+                  <!-- Click handler on the name for navigation -->
+                  <span :class="{ 'dir-link': file.isDir }" @click="file.isDir ? enterDirectory(file) : null">
+                     {{ file.name }}
+                  </span>
                 </td>
                 <td>{{ formatSize(file.size) }}</td>
                 <td>{{ formatDate(file.modTime) }}</td>
                 <td>{{ file.mode }}</td>
+              </tr>
+              <tr v-if="!isBrowsing && sortedCurrentViewItems.length === 0">
+                <td colspan="5" class="empty-dir-msg">这个文件夹是空的。</td>
               </tr>
               </tbody>
             </table>
@@ -191,13 +225,27 @@
           <div class="card">
             <h3>从最近的备份恢复</h3>
             <p class="description">点击一项来选择它作为恢复源。</p>
+
             <div class="backup-history-list">
-              <div v-for="item in backupHistory" :key="item.ID" class="history-item" @click="restoreFile = item.BackupPath">
-                <div class="history-item-main">
-                  <span class="history-file">{{ item.FileName }}</span>
-                  <span class="history-date">{{ formatDate(item.CreatedAt) }}</span>
+              <div v-for="item in backupHistory" :key="item.ID"
+                   class="history-item-wrapper"
+                   :class="{ 'expanded': expandedBackupId === item.ID }">
+                <div class="history-item" @click="toggleBackupDetails(item)">
+                  <div class="history-item-main">
+                    <span class="history-file">{{ item.FileName }}</span>
+                    <span class="history-date">{{ formatDate(item.CreatedAt) }}</span>
+                  </div>
+                  <small class="history-path">{{ item.BackupPath }}</small>
                 </div>
-                <small class="history-path">{{ item.BackupPath }}</small>
+                <!-- Expanded Details View -->
+                <div v-if="expandedBackupId === item.ID" class="backup-details">
+                  <h4>包含的文件/文件夹:</h4>
+                  <ul>
+                    <li v-for="(path, index) in item.SourcePaths.split('\n').filter(p => p)" :key="index">
+                      {{ path }}
+                    </li>
+                  </ul>
+                </div>
               </div>
               <div v-if="!backupHistory.length" class="history-empty">
                 暂无备份记录。
@@ -318,9 +366,29 @@
 import {ref, onMounted, reactive, computed, nextTick} from 'vue';
 import {
   SelectFiles, SelectDirectory, GetFileMetadata, StartBackup, StopOperation,
-  GetBackupHistory, StartRestore, OpenInExplorer, ResolveConflict
+  GetBackupHistory, StartRestore, OpenInExplorer, ResolveConflict, ListDirectory
 } from '../wailsjs/go/main/App';
 import { EventsOn } from '../wailsjs/runtime/runtime';
+
+onMounted(() => {
+  EventsOn("log_message", (data) => {
+    logMessages.value.unshift(data);
+    statusMessage.value = data; // Also update status for real-time feedback
+    if (logMessages.value.length > 200) logMessages.value.pop();
+  });
+  EventsOn("progress_update", (p) => {
+    statusMessage.value = p.message;
+  });
+  EventsOn("conflict_detected", (data) => {
+    // data 包含 { path: "...", requestID: "..." }
+    conflictInfo.path = data.path;
+    conflictInfo.requestID = data.requestID;
+    isConflictModalVisible.value = true;
+  });
+
+  fetchBackupHistory();
+});
+
 
 // --- Global State ---
 const currentScreen = ref('home'); // 'home', 'backup', 'restore'
@@ -331,6 +399,7 @@ const progress = reactive({ value: 0, max: 100 });
 const isPasswordModalVisible = ref(false);
 const restorePasswordInput = ref('');
 const passwordInputRef = ref(null);
+
 
 // 添加进度阶段状态
 const progressStage = ref(''); // 'compressing', 'encrypting', 'archiving', 'decrypting', 'decompressing', 'restoring'
@@ -370,13 +439,21 @@ const filters = ref({
 });
 const encryption = reactive({enabled: false, password: '', algorithm: 'AES-256'});
 
-
+const pathStack = ref([{ name: '根目录', path: 'root' }]); // Breadcrumb stack
+const currentViewItems = ref([]); // Items currently in the table
+const isBrowsing = ref(false); // Loading indicator state
+const fileSelectionMap = reactive(new Map()); // Master map for selection state { path: boolean }
 
 function resetBackupState() {
   backupStep.value = 1;
   backupFiles.value = [];
   backupDest.value = '';
   inProgress.value = false;
+
+  pathStack.value = [{ name: '根目录', path: 'root' }];
+  currentViewItems.value = [];
+  fileSelectionMap.clear();
+
 }
 
 // 添加获取进度阶段文本的函数
@@ -399,40 +476,89 @@ function getProgressStageText() {
   }
 }
 
-
 async function selectBackupSources(type) {
   try {
     const paths = await SelectFiles(type === 'dirs');
     if (paths && paths.length > 0) {
       const metadata = await GetFileMetadata(paths);
-      const existingPaths = new Set(backupFiles.value.map(f => f.path));
       metadata.forEach(m => {
-        if (!existingPaths.has(m.path)) {
-          backupFiles.value.push({...m, selected: true});
+        // Add to top-level list if not already there
+        if (!backupFiles.value.some(f => f.path === m.path)) {
+          backupFiles.value.push({ ...m, selected: true });
         }
+        // Add to selection map
+        fileSelectionMap.set(m.path, true);
       });
+      // Refresh the root view
+      await loadDirectoryView('root');
     }
   } catch (error) {
     statusMessage.value = `Error selecting sources: ${error}`;
   }
 }
 
-const selectDestDir = async () => {
-  if (inProgress.value) return;
-  const dir = await SelectDirectory();
-  if (dir) backupDest.value = dir;
-};
+async function loadDirectoryView(path) {
+  isBrowsing.value = true;
+  statusMessage.value = `正在加载 ${path}...`;
+  try {
+    let items;
+    if (path === 'root') {
+      // Root view shows the initial selected files/folders
+      items = [...backupFiles.value];
+    } else {
+      // Fetch contents from backend for subdirectories
+      items = await ListDirectory(path);
+    }
 
-const sortedBackupFiles = computed(() => {
-  return [...backupFiles.value].sort((a, b) => {
+    // Sync selection state from the master map
+    currentViewItems.value = items.map(item => ({
+      ...item,
+      selected: fileSelectionMap.get(item.path) || false
+    }));
+
+  } catch (error) {
+    statusMessage.value = `加载目录失败: ${error}`;
+    currentViewItems.value = []; // Clear view on error
+  } finally {
+    isBrowsing.value = false;
+    statusMessage.value = '准备就绪。';
+  }
+}
+
+async function enterDirectory(dir) {
+  pathStack.value.push({ name: dir.name, path: dir.path });
+  await loadDirectoryView(dir.path);
+}
+
+async function navigateToBreadcrumb(index) {
+  pathStack.value = pathStack.value.slice(0, index + 1);
+  const targetPath = pathStack.value[pathStack.value.length - 1].path;
+  await loadDirectoryView(targetPath);
+}
+
+function updateSelection(file) {
+  fileSelectionMap.set(file.path, file.selected);
+}
+
+const sortedCurrentViewItems = computed(() => {
+  return [...currentViewItems.value].sort((a, b) => {
+    // Put directories first
+    if (a.isDir !== b.isDir) {
+      return a.isDir ? -1 : 1;
+    }
     let modifier = sort.order === 'asc' ? 1 : -1;
-    if (a[sort.key] < b[sort.key]) return -1 * modifier;
-    if (a[sort.key] > b[sort.key]) return 1 * modifier;
+    let valA = a[sort.key];
+    let valB = b[sort.key];
+    if (typeof valA === 'string') {
+      return valA.localeCompare(valB) * modifier;
+    }
+    if (valA < valB) return -1 * modifier;
+    if (valA > valB) return 1 * modifier;
     return 0;
   });
 });
 
-function sortBackupFiles(key) {
+function sortCurrentViewItems(key) {
   if (sort.key === key) {
     sort.order = sort.order === 'asc' ? 'desc' : 'asc';
   } else {
@@ -441,13 +567,38 @@ function sortBackupFiles(key) {
   }
 }
 
-const allBackupFilesSelected = computed(() => backupFiles.value.length > 0 && backupFiles.value.every(f => f.selected));
-const selectedBackupFileCount = computed(() => backupFiles.value.filter(f => f.selected).length);
+const allCurrentViewFilesSelected = computed(() => {
+  if (currentViewItems.value.length === 0) return false;
+  return currentViewItems.value.every(f => f.selected);
+});
 
-function toggleSelectAllBackupFiles(event) {
+const isCurrentViewIndeterminate = computed(() => {
+  if (currentViewItems.value.length === 0) return false;
+  const selectedCount = currentViewItems.value.filter(f => f.selected).length;
+  return selectedCount > 0 && selectedCount < currentViewItems.value.length;
+});
+
+function toggleSelectAllCurrentView(event) {
   const isChecked = event.target.checked;
-  backupFiles.value.forEach(f => f.selected = isChecked);
+  currentViewItems.value.forEach(f => {
+    f.selected = isChecked;
+    fileSelectionMap.set(f.path, isChecked);
+  });
 }
+
+const selectedBackupFileCount = computed(() => {
+  let count = 0;
+  for (const selected of fileSelectionMap.values()) {
+    if (selected) count++;
+  }
+  return count;
+});
+
+const selectDestDir = async () => {
+  if (inProgress.value) return;
+  const dir = await SelectDirectory();
+  if (dir) backupDest.value = dir;
+};
 
 // 添加计算对数进度的函数
 function calculateLogProgress(elapsedTime) {
@@ -515,7 +666,9 @@ function updateProgress() {
 }
 
 async function doBackup() {
-  const selectedPaths = backupFiles.value.filter(f => f.selected).map(f => f.path);
+  const selectedPaths = Array.from(fileSelectionMap.entries())
+      .filter(([, selected]) => selected)
+      .map(([path]) => path);
   if (selectedPaths.length === 0 || !backupDest.value) {
     statusMessage.value = "请选择要备份的文件和目标目录。";
     return;
@@ -582,6 +735,8 @@ async function doBackup() {
 const backupHistory = ref([]);
 const restoreFile = ref('');
 const restoreDir = ref('');
+const expandedBackupId = ref(null);
+
 
 function resetRestoreState() {
   restoreFile.value = '';
@@ -590,7 +745,20 @@ function resetRestoreState() {
   restorePasswordInput.value = '';
   inProgress.value = false;
   isPasswordModalVisible.value = false;
+  expandedBackupId.value = null; // Reset expanded item
   fetchBackupHistory();
+}
+
+function toggleBackupDetails(item) {
+  // Always set the selected file for restoration
+  restoreFile.value = item.BackupPath;
+
+  // Toggle the expanded view
+  if (expandedBackupId.value === item.ID) {
+    expandedBackupId.value = null; // Collapse if it's already open
+  } else {
+    expandedBackupId.value = item.ID; // Expand the clicked item
+  }
 }
 
 async function fetchBackupHistory() {
@@ -616,7 +784,6 @@ const selectRestoreDir = async () => {
 
 
 async function doRestore(password) {
-  // ... 此函数内部逻辑保持不变
   let cleanPassword = (typeof password === 'string') ? password : '';
   if (!restoreFile.value || !restoreDir.value) {
     statusMessage.value = "请选择备份文件和恢复目录。";
@@ -720,26 +887,6 @@ const formatDate = (dateString) => {
   if (!dateString) return 'N/A';
   return new Date(dateString).toLocaleString();
 };
-
-onMounted(() => {
-  EventsOn("log_message", (data) => {
-    logMessages.value.unshift(data);
-    statusMessage.value = data; // Also update status for real-time feedback
-    if (logMessages.value.length > 200) logMessages.value.pop();
-  });
-  EventsOn("progress_update", (p) => {
-    statusMessage.value = p.message;
-  });
-  EventsOn("conflict_detected", (data) => {
-    // data 包含 { path: "...", requestID: "..." }
-    conflictInfo.path = data.path;
-    conflictInfo.requestID = data.requestID;
-    isConflictModalVisible.value = true;
-  });
-
-  fetchBackupHistory();
-});
-
 
 // 添加成功弹窗状态
 const showSuccessModal = ref(false);
@@ -1358,4 +1505,167 @@ input[type="checkbox"].toggle:checked::before {
   margin-bottom: 2rem;
 }
 
+/* Stepper Styles */
+.stepper {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 80%;
+  margin: 1rem auto 2rem;
+  padding: 0 1rem;
+}
+.step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  color: #a0aec0; /* Inactive color */
+  transition: color 0.3s;
+}
+.step-circle {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background-color: #4a5568;
+  border: 2px solid #a0aec0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  margin-bottom: 0.5rem;
+  transition: background-color 0.3s, border-color 0.3s;
+}
+.step-title {
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+.step-line {
+  flex-grow: 1;
+  height: 2px;
+  background-color: #4a5568;
+  margin: 0 1rem;
+  transform: translateY(-16px); /* Align with the middle of the circles */
+  transition: background-color 0.3s;
+}
+/* Active & Completed States */
+.step.active .step-circle {
+  background-color: #4299e1; /* Active blue */
+  border-color: #4299e1;
+}
+.step.active {
+  color: #e2e8f0; /* Active text color */
+}
+.step.completed .step-circle {
+  background-color: #48bb78; /* Completed green */
+  border-color: #48bb78;
+}
+.step.completed {
+  color: #c6f6d5; /* Completed text color */
+}
+.step-line.completed {
+  background-color: #48bb78;
+}
+
+/* Restore Item Expansion Styles */
+.history-item-wrapper {
+  border-bottom: 1px solid #4a5568;
+  transition: background-color 0.2s;
+}
+.history-item-wrapper:last-child {
+  border-bottom: none;
+}
+.history-item {
+  padding: 1rem;
+  cursor: pointer;
+}
+.history-item:hover {
+  background-color: rgba(255, 255, 255, 0.05);
+}
+.history-item-wrapper.expanded .history-item {
+  background-color: #3b485b; /* A slightly different background when expanded */
+}
+.backup-details {
+  background-color: #2d3748; /* Darker background for details */
+  padding: 1rem 1.5rem;
+  border-top: 1px solid #4a5568;
+}
+.backup-details h4 {
+  margin-top: 0;
+  margin-bottom: 0.75rem;
+  color: #a0aec0;
+  font-size: 0.9rem;
+}
+.backup-details ul {
+  list-style-type: none;
+  padding-left: 0;
+  margin: 0;
+}
+.backup-details li {
+  padding: 0.25rem 0;
+  font-size: 0.85rem;
+  color: #cbd5e0;
+  word-break: break-all;
+}
+
+.breadcrumbs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-bottom: -1rem; /* Adjust to align with header */
+  padding-bottom: 1rem;
+}
+.breadcrumb-item {
+  color: #a0aec0;
+  cursor: pointer;
+  transition: color 0.2s;
+}
+.breadcrumb-item:hover {
+  color: #63b3ed;
+}
+.breadcrumb-item::after {
+  content: '>';
+  margin: 0 0.5rem;
+  color: #718096;
+}
+.breadcrumb-item:last-child {
+  color: #e2e8f0;
+  cursor: default;
+}
+.breadcrumb-item:last-child::after {
+  content: '';
+}
+.dir-link {
+  color: #63b3ed;
+  cursor: pointer;
+  text-decoration: none;
+}
+.dir-link:hover {
+  text-decoration: underline;
+}
+
+.file-list-card {
+  position: relative; /* Needed for loading overlay */
+}
+.loading-overlay {
+  position: absolute;
+  top: 50px; /* Below header */
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(30, 41, 59, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+  color: #e2e8f0;
+  font-size: 1.2rem;
+}
+.file-table.is-loading tbody {
+  opacity: 0.3;
+}
+.empty-dir-msg {
+  text-align: center;
+  padding: 2rem;
+  color: #a0aec0;
+}
 </style>

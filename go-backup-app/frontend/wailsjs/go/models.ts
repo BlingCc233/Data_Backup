@@ -99,6 +99,7 @@ export namespace main {
 	    BackupPath: string;
 	    // Go type: time
 	    CreatedAt: any;
+	    SourcePaths: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new BackupRecord(source);
@@ -110,6 +111,7 @@ export namespace main {
 	        this.FileName = source["FileName"];
 	        this.BackupPath = source["BackupPath"];
 	        this.CreatedAt = this.convertValues(source["CreatedAt"], null);
+	        this.SourcePaths = source["SourcePaths"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

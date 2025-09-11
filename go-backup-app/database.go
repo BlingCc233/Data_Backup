@@ -33,6 +33,7 @@ func InitializeDatabase(ctx context.Context) (*sql.DB, error) {
 		id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
 		file_name TEXT,
 		backup_path TEXT,
+		source_paths TEXT, 
 		created_at DATETIME
 	);
 	`

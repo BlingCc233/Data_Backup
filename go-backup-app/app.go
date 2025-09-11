@@ -179,7 +179,7 @@ func (a *App) StartBackup(config BackupConfig) (string, error) {
 		return "", fmt.Errorf("Backup failed: %w", err)
 	}
 
-	if err := a.AddBackupRecord(fileName, destinationFile); err != nil {
+	if err := a.AddBackupRecord(fileName, destinationFile, config.SourcePaths); err != nil {
 		log.Printf("Failed to save backup record to database: %v", err)
 	}
 
@@ -196,6 +196,11 @@ type RestoreConfig struct {
 }
 
 // ResolveConflict is called by the frontend to resolve a file conflict.
+
+type conflictRequest struct {
+	responseChan chan core.ConflictAction
+}
+
 func (a *App) ResolveConflict(requestID string, resolution string) error {
 	a.conflictMutex.Lock()
 	defer a.conflictMutex.Unlock()
@@ -284,24 +289,27 @@ func (a *App) StartRestore(config RestoreConfig) (string, error) {
 // --- Database Functions ---
 
 type BackupRecord struct {
-	ID         int       `json:"ID"`
-	FileName   string    `json:"FileName"`
-	BackupPath string    `json:"BackupPath"`
-	CreatedAt  time.Time `json:"CreatedAt"`
+	ID          int       `json:"ID"`
+	FileName    string    `json:"FileName"`
+	BackupPath  string    `json:"BackupPath"`
+	CreatedAt   time.Time `json:"CreatedAt"`
+	SourcePaths string    `json:"SourcePaths"`
 }
 
-func (a *App) AddBackupRecord(fileName, backupPath string) error {
-	stmt, err := a.db.Prepare("INSERT INTO backups(file_name, backup_path, created_at) VALUES(?, ?, ?)")
+func (a *App) AddBackupRecord(fileName, backupPath string, sourcePaths []string) error {
+	// We'll store the list as a newline-separated string
+	sourcePathsStr := strings.Join(sourcePaths, "\n")
+	stmt, err := a.db.Prepare("INSERT INTO backups(file_name, backup_path, created_at, source_paths) VALUES(?, ?, ?, ?)")
 	if err != nil {
 		return err
 	}
 	defer stmt.Close()
-	_, err = stmt.Exec(fileName, backupPath, time.Now())
+	_, err = stmt.Exec(fileName, backupPath, time.Now(), sourcePathsStr)
 	return err
 }
 
 func (a *App) GetBackupHistory() ([]BackupRecord, error) {
-	rows, err := a.db.Query("SELECT id, file_name, backup_path, created_at FROM backups ORDER BY created_at DESC LIMIT 50")
+	rows, err := a.db.Query("SELECT id, file_name, backup_path, created_at, source_paths FROM backups ORDER BY created_at DESC LIMIT 50")
 	if err != nil {
 		return nil, err
 	}
@@ -314,7 +322,7 @@ func (a *App) GetBackupHistory() ([]BackupRecord, error) {
 	// 先获取所有记录
 	for rows.Next() {
 		var r BackupRecord
-		if err := rows.Scan(&r.ID, &r.FileName, &r.BackupPath, &r.CreatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.FileName, &r.BackupPath, &r.CreatedAt, &r.SourcePaths); err != nil {
 			return nil, err
 		}
 		records = append(records, r)
@@ -352,6 +360,29 @@ func (a *App) GetBackupHistory() ([]BackupRecord, error) {
 	return validRecords, nil
 }
 
-type conflictRequest struct {
-	responseChan chan core.ConflictAction
+func (a *App) ListDirectory(path string) ([]FileInfo, error) {
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		log.Printf("Could not read directory %s: %v", path, err)
+		return nil, fmt.Errorf("无法读取目录: %w", err)
+	}
+
+	var results []FileInfo
+	for _, entry := range entries {
+		fullPath := filepath.Join(path, entry.Name())
+		info, err := os.Lstat(fullPath) // Use Lstat to handle symlinks correctly if needed
+		if err != nil {
+			log.Printf("Could not stat path %s: %v", fullPath, err)
+			continue // Skip files we can't access
+		}
+		results = append(results, FileInfo{
+			Path:    fullPath,
+			Name:    info.Name(),
+			Size:    info.Size(),
+			Mode:    info.Mode().String(),
+			ModTime: info.ModTime(),
+			IsDir:   info.IsDir(),
+		})
+	}
+	return results, nil
 }
