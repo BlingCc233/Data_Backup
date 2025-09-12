@@ -67,7 +67,7 @@
           <div class="step-line" :class="{ completed: backupStep > 2 }"></div>
           <div class="step" :class="{ active: backupStep === 3 }">
             <div class="step-circle">3</div>
-            <div class="step-title">加密与执行</div>
+            <div class="step-title">压缩与加密</div>
           </div>
         </div>
 
@@ -224,7 +224,19 @@
         <div v-if="backupStep === 3">
           <div v-if="!inProgress">
             <div class="card">
-              <h3>Step 3: 加密与执行</h3>
+              <h3>Step 3: 压缩与加密</h3>
+              <!-- Compression Switch -->
+              <div class="input-group">
+                <label>启用压缩</label>
+                <input type="checkbox" v-model="compression.enabled" class="toggle"/>
+              </div>
+              <p class="description" v-if="compression.enabled">
+                <strong>Huffman:</strong> 默认启用，提供良好的压缩率和速度平衡。<br>
+                <strong style="color: #f6ad55;">注意: 关闭后备份速度更快，但文件体积会更大。</strong>
+
+              </p>
+              <hr class="card-divider">
+              <!-- Encryption Section -->
               <div class="input-group">
                 <label>启用加密</label>
                 <input type="checkbox" v-model="encryption.enabled" class="toggle"/>
@@ -528,6 +540,7 @@ const filters = ref({
   includeNames: '', excludeNames: '', minSizeValue: 0, minSizeUnit: 'Bytes',
   maxSizeValue: 0, maxSizeUnit: 'Bytes', newerThan: null, olderThan: null,
 });
+const compression = reactive({enabled: true});
 const encryption = reactive({enabled: false, password: '', algorithm: 'AES-256'});
 
 const pathStack = ref([{name: '根目录', path: 'root'}]); // Breadcrumb stack
@@ -621,6 +634,10 @@ function resetBackupState() {
   inProgress.value = false;
   isProfileModalVisible.value = false;
   newProfileName.value = '';
+  compression.enabled = true;
+  encryption.enabled = false;
+  encryption.password = '';
+
 
   pathStack.value = [{name: '根目录', path: 'root'}];
   currentViewItems.value = [];
@@ -877,7 +894,7 @@ async function doBackup() {
         minSize: minSize,
         maxSize: maxSize,
       },
-      UseCompression: true,
+      UseCompression: compression.enabled,
       useEncryption: encryption.enabled,
       encryptionAlgorithm: encryption.algorithm,
       encryptionPassword: encryption.password,

@@ -372,8 +372,9 @@ func (a *App) GetBackupHistory() ([]BackupRecord, error) {
 	defer rows.Close()
 
 	var records []BackupRecord
-	var validRecords []BackupRecord
-	var invalidIDs []int // 存储不存在文件的记录ID
+	// 使用 make 初始化为一个长度为0的非nil slice
+	validRecords := make([]BackupRecord, 0)
+	var invalidIDs []int
 
 	// 先获取所有记录
 	for rows.Next() {
@@ -387,21 +388,17 @@ func (a *App) GetBackupHistory() ([]BackupRecord, error) {
 	// 检查文件是否存在
 	for _, record := range records {
 		if _, err := os.Stat(record.BackupPath); err == nil {
-			// 文件存在，添加到有效记录中
 			validRecords = append(validRecords, record)
 		} else {
-			// 文件不存在，记录需要删除的ID
 			invalidIDs = append(invalidIDs, record.ID)
 		}
 	}
 
 	// 删除不存在的文件记录
 	if len(invalidIDs) > 0 {
-		// 构建占位符
 		placeholders := strings.Repeat("?,", len(invalidIDs)-1) + "?"
 		query := fmt.Sprintf("DELETE FROM backups WHERE id IN (%s)", placeholders)
 
-		// 构建参数
 		args := make([]interface{}, len(invalidIDs))
 		for i, id := range invalidIDs {
 			args[i] = id
@@ -413,7 +410,7 @@ func (a *App) GetBackupHistory() ([]BackupRecord, error) {
 		}
 	}
 
-	return validRecords, nil
+	return validRecords, nil // 现在即使没有记录，也会返回一个 [] 而不是 nil
 }
 
 func (a *App) ListDirectory(path string) ([]FileInfo, error) {
