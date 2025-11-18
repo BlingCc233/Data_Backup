@@ -11,9 +11,9 @@
 
 **一款极致并行、安全加密、界面美观的现代化跨平台数据备份软件。**
 
-[![构建状态](https://img.shields.io/github/actions/workflow/status/BlingCc233/Data_Backup/.github/workflows/release.yml?branch=main&style=for-the-badge)](https://github.com/BlingCc233/Data_Backup/actions)
-[![最新版本](https://img.shields.io/github/v/release/BlingCc233/Data_Backup?style=for-the-badge)](https://github.com/BlingCc233/Data_Backup/releases)
-[![许可证](https://img.shields.io/github/license/BlingCc233/Data_Backup?style=for-the-badge)](./LICENSE)
+[![构建状态](https://img.shields.io/github/actions/workflow/status/Futaiii/Data_Backup/.github/workflows/release.yml?branch=main&style=for-the-badge)](https://github.com/Futaiii/Data_Backup/actions)
+[![最新版本](https://img.shields.io/github/v/release/Futaiii/Data_Backup?style=for-the-badge)](https://github.com/Futaiii/Data_Backup/releases)
+[![许可证](https://img.shields.io/github/license/Futaiii/Data_Backup?style=for-the-badge)](./LICENSE)
 [![Go 版本](https://img.shields.io/badge/Go-1.2x-blue.svg?style=for-the-badge)](https://golang.org/)
 [![Wails 版本](https://img.shields.io/badge/Wails-v2-red.svg?style=for-the-badge)](https://wails.io/)
 [![Vue.js 版本](https://img.shields.io/badge/Vue.js-v3-green.svg?style=for-the-badge)](https://vuejs.org/)
@@ -86,7 +86,7 @@
 
 1.  **克隆仓库**
     ```bash
-    git clone https://github.com/BlingCc233/Data_Backup.git
+    git clone https://github.com/Futaiii/Data_Backup.git
     cd Data_Backup/go-backup-app
     ```
 
@@ -110,7 +110,7 @@
 
 ### 从 Releases 下载
 
-您可以直接从 [GitHub Releases](https://github.com/BlingCc233/Data_Backup/releases) 页面下载适用于您操作系统的最新版本。
+您可以直接从 [GitHub Releases](https://github.com/Futaiii/Data_Backup/releases) 页面下载适用于您操作系统的最新版本。
 
 ## 📖 使用说明
 
@@ -136,26 +136,22 @@
 
 ## TODO
 
-1. 完善 pkg/filter: 实现所有筛选逻辑，特别是路径和名称的通配符匹配，以及平台相关的用户筛选。
-2. 实现 pkg/scheduler: 引入 github.com/kardianos/service 库，并根据其文档为 Windows, macOS (launchd), 和 Linux (systemd) 实现服务注册和注销。
-3. 实现 app.go 中的配置持久化: 将 GetBackupProfiles 和 SaveProfile 函数连接到一个本地的 JSON 或 SQLite 文件，以保存用户的配置。
-4. 网络备份 (Feature): 为 S3, FTP 等协议设计并实现上传/下载逻辑。
-5. 增强前端UI:
-   * 提供文件夹内子文件筛选功能。
+
+1. 实现 pkg/scheduler: 引入 github.com/kardianos/service 库，并根据其文档为 Windows, macOS (launchd), 和 Linux (systemd) 实现服务注册和注销。
+2. 网络备份 (Feature): 为 S3, FTP 等协议设计并实现上传/下载逻辑。
+3. 增强前端UI:
    * 新增管理定时任务和服务的UI。
-   * 加入动画等待后台任务完成。
    * sqlite可展开显示每项备份的内容.
-   * modal优化
 
 ## TODO2
-1. 完善筛选器 (core/filters.go): 在 ShouldInclude 函数中，根据 FilterConfig 的字段（路径、大小、时间等）添加详细的 if/else 判断逻辑。
-2. 实现服务与定时任务 (app.go):
+
+1. 实现服务与定时任务 (app.go):
    1. 引入 github.com/kardianos/service 来处理跨平台的服务注册。
    2. 引入 github.com/robfig/cron/v3 来解析 cron 表达式并调度备份任务。在 main 函数或 App 结构体中启动一个 cron 调度器。
-3. 实现网络备份 (core/network.go):
+2. 实现网络备份 (core/network.go):
    1. 为 S3, FTP 等创建具体的 Uploader 实现。例如，S3Uploader 会使用 AWS Go SDK。
    2. 在 BackupManager 中，检查目标路径是否是 URL，如果是，则创建一个内存 pipe，ArchiveWriter 写入 pipe，网络上传器从 pipe 读取并上传。
-4. 完善前端 UI:
+3. 完善前端 UI:
    1. 添加用于定时任务的 UI 组件。
 
 
@@ -213,6 +209,10 @@
 **v1.2.1**
 - [X] 修复windows直接打开恢复页面无内容bug
 - [X] 新增对压缩的选项开关
+
+**v1.3.1**
+- [X] 重构UI，采用neo brutalism风格
+- [X] 暂时移除按时间筛选的功能
 
 ## 📄 许可证
 
